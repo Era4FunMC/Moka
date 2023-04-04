@@ -1,0 +1,287 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 2 Apr 2023 15:14:01 +0800
+Subject: [PATCH] Fix a concurrent exception in WorkStealingThreadPool
+
+
+diff --git a/src/main/java/co/earthme/hearse/concurrent/WorkStealingThreadPool.java b/src/main/java/co/earthme/hearse/concurrent/WorkStealingThreadPool.java
+index 42d63f105e35e622517378f07aa75e1951d620c5..0ffe40c5bd4e9803fccf03f901fb1e164eec9eeb 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/WorkStealingThreadPool.java
++++ b/src/main/java/co/earthme/hearse/concurrent/WorkStealingThreadPool.java
+@@ -1,5 +1,6 @@
+ package co.earthme.hearse.concurrent;
+ 
++import com.google.common.collect.Lists;
+ import org.jetbrains.annotations.NotNull;
+ import org.jetbrains.annotations.Nullable;
+ 
+@@ -8,26 +9,20 @@ import java.util.concurrent.*;
+ import java.util.concurrent.atomic.*;
+ import java.util.concurrent.locks.*;
+ 
+-public class WorkStealingThreadPool{
++public class WorkStealingThreadPool {
+     private final Executor packaged = new PackagedExecutor(this);
+-    private final List<WorkerThread> workers = new ArrayList<>();
+-    private final StampedLock workersLock = new StampedLock();
+-    private int lastPostedPos = 0;
++    private final List<WorkerThread> workers = Lists.newCopyOnWriteArrayList();
+     private final WorkerThreadFactory factory;
++    private int lastPostedPos = 0;
+ 
+-    public WorkStealingThreadPool(int nThreads, WorkerThreadFactory factory){
++    public WorkStealingThreadPool(int nThreads, WorkerThreadFactory factory) {
+         this.factory = factory;
+         this.runWorkers(nThreads);
+     }
+ 
+-    private void sendStopToAll(){
+-        final long stamp = this.workersLock.readLock();
+-        try {
+-            for (WorkerThread workerThread : this.workers){
+-                workerThread.sendStop();
+-            }
+-        }finally {
+-            this.workersLock.unlockRead(stamp);
++    private void sendStopToAll() {
++        for (WorkerThread workerThread : this.workers) {
++            workerThread.sendStop();
+         }
+     }
+ 
+@@ -36,61 +31,33 @@ public class WorkStealingThreadPool{
+         return this.packaged;
+     }
+ 
+-    private void runWorkers(int threadCount){
++    private void runWorkers(int threadCount) {
+         for (int i = 0; i < threadCount; i++) {
+             final WorkerThread workerThread = new WorkerThread();
+-            final long stamp = this.workersLock.writeLock();
+-            try {
+-                this.workers.add(workerThread);
+-            }finally {
+-                this.workersLock.unlockWrite(stamp);
+-            }
++            this.workers.add(workerThread);
+             workerThread.start();
+         }
+     }
+ 
+-    public void awaitTasks(){
+-        final long stamp = this.workersLock.readLock();
+-        try {
+-            for (WorkerThread workerThread : this.workers){
+-                workerThread.awaitTasks();
+-            }
+-        }finally {
+-            this.workersLock.unlockRead(stamp);
++    public void awaitTasks() {
++        for (WorkerThread workerThread : this.workers) {
++            workerThread.awaitTasks();
+         }
+     }
+ 
+-    public void postTask(@NotNull Runnable task){
+-        long stamp = this.workersLock.tryOptimisticRead();
+-        if (this.workersLock.validate(stamp)){
+-            int workerIndex;
+-            synchronized (this.workers){
+-                if (this.lastPostedPos+1 >= this.workers.size()){
+-                    this.lastPostedPos = 0;
+-                }
+-                workerIndex = this.lastPostedPos++;
+-            }
+-            final WorkerThread workerThread = this.workers.get(workerIndex);
+-            workerThread.postRunnable(task);
+-            return;
+-        }
+-        stamp = this.workersLock.readLock();
+-        try {
+-            int workerIndex;
+-            synchronized (this.workers){
+-                if (this.lastPostedPos+1 >= this.workers.size()){
+-                    this.lastPostedPos = 0;
+-                }
+-                workerIndex = this.lastPostedPos++;
++    public void postTask(@NotNull Runnable task) {
++        int workerIndex;
++        synchronized (this.workers) {
++            if (this.lastPostedPos + 1 >= this.workers.size()) {
++                this.lastPostedPos = 0;
+             }
+-            final WorkerThread workerThread = this.workers.get(workerIndex);
+-            workerThread.postRunnable(task);
+-        }finally {
+-            this.workersLock.unlockRead(stamp);
++            workerIndex = this.lastPostedPos++;
+         }
++        final WorkerThread workerThread = this.workers.get(workerIndex);
++        workerThread.postRunnable(task);
+     }
+ 
+-    public <T> Future<T> postTask(@NotNull Callable<T> task){
++    public <T> Future<T> postTask(@NotNull Callable<T> task) {
+         final FutureTask<T> newTask = new FutureTask<>(task);
+         this.postTask(newTask);
+         return newTask;
+@@ -106,122 +73,104 @@ public class WorkStealingThreadPool{
+         private volatile boolean running = false;
+ 
+ 
+-        public void postRunnable(@NotNull Runnable task){
++        public void postRunnable(@NotNull Runnable task) {
+             this.taskLock.writeLock().lock();
+             try {
+                 this.tasks.add(task);
+-            }finally {
++            } finally {
+                 this.taskLock.writeLock().unlock();
+             }
+         }
+ 
+-        public void sendStop(){
++        public void sendStop() {
+             this.shouldRun = false;
+             LockSupport.unpark(this.worker);
+         }
+ 
+-        public void awaitTerminate(){
+-            while (this.running){
++        public void awaitTerminate() {
++            while (this.running) {
+                 LockSupport.parkNanos(100000);
+             }
+         }
+ 
+-        public void awaitTasks(){
+-            while (this.runningTask.get()){
++        public void awaitTasks() {
++            while (this.runningTask.get()) {
+                 LockSupport.parkNanos(100000);
+             }
+         }
+ 
+         @Override
+-        public void run(){
++        public void run() {
+             Runnable curTask;
+             Runnable stole;
+-            while (this.shouldRun || !this.tasks.isEmpty()){
+-                if ((curTask = this.pollTask(false)) != null){
++            while (this.shouldRun || !this.tasks.isEmpty()) {
++                if ((curTask = this.pollTask(false)) != null) {
+                     this.runningTask.set(true);
+                     try {
+                         curTask.run();
+-                    }catch (Exception e){
++                    } catch (Exception e) {
+                         e.printStackTrace();
+-                    }finally {
++                    } finally {
+                         this.runningTask.set(false);
+                     }
+                     continue;
+                 }
+ 
+-                if ((stole = this.steal()) != null){
++                if ((stole = this.steal()) != null) {
+                     try {
+                         stole.run();
+-                    }catch (Exception e){
++                    } catch (Exception e) {
+                         e.printStackTrace();
+                     }
+                     continue;
+                 }
+ 
+-                LockSupport.parkNanos("FREE WAITING",1000000);
++                LockSupport.parkNanos("FREE WAITING", 1000000);
+             }
+             this.running = false;
+         }
+ 
+-        public void start(){
++        public void start() {
+             this.running = true;
+             this.shouldRun = true;
+             this.worker.start();
+         }
+ 
+         @Nullable
+-        private Runnable steal(){
+-            long stamp = WorkStealingThreadPool.this.workersLock.tryOptimisticRead();
+-            if (WorkStealingThreadPool.this.workersLock.validate(stamp)){
+-                for (WorkerThread workerThread : WorkStealingThreadPool.this.workers){
+-                    if (workerThread.equals(this)){
+-                        continue;
+-                    }
+-                    if (workerThread.isCurrentThreadRunningTask() && workerThread.getQueuedTaskCount() >= 1){
+-                        return workerThread.pollTask(true);
+-                    }
++        private Runnable steal() {
++            for (WorkerThread workerThread : WorkStealingThreadPool.this.workers) {
++                if (workerThread.equals(this)) {
++                    continue;
+                 }
+-                return null;
+-            }
+-
+-            stamp = WorkStealingThreadPool.this.workersLock.readLock();
+-            try {
+-                for (WorkerThread workerThread : WorkStealingThreadPool.this.workers){
+-                    if (workerThread.equals(this)){
+-                        continue;
+-                    }
+-                    if (workerThread.isCurrentThreadRunningTask() && workerThread.getQueuedTaskCount() >= 1){
+-                        return workerThread.pollTask(true);
+-                    }
++                if (workerThread.isCurrentThreadRunningTask() && workerThread.getQueuedTaskCount() >= 1) {
++                    return workerThread.pollTask(true);
+                 }
+-                return null;
+-            }finally {
+-                WorkStealingThreadPool.this.workersLock.unlockRead(stamp);
+             }
++            return null;
+         }
+ 
+ 
+-        protected int getQueuedTaskCount(){
++        protected int getQueuedTaskCount() {
+             this.taskLock.readLock().lock();
+             try {
+                 return this.tasks.size();
+-            }finally {
++            } finally {
+                 this.taskLock.readLock().unlock();
+             }
+         }
+ 
+-        protected boolean isCurrentThreadRunningTask(){
++        protected boolean isCurrentThreadRunningTask() {
+             return this.runningTask.get();
+         }
+ 
+         @Nullable
+-        protected Runnable pollTask(boolean tail){
++        protected Runnable pollTask(boolean tail) {
+             Runnable polledRunnable;
+ 
+             this.taskLock.writeLock().lock();
+             try {
+                 polledRunnable = tail ? this.tasks.pollLast() : this.tasks.pollFirst();
+-            }finally {
++            } finally {
+                 this.taskLock.writeLock().unlock();
+             }
+ 
+@@ -229,7 +178,7 @@ public class WorkStealingThreadPool{
+         }
+     }
+ 
+-    public static class PackagedExecutor implements Executor{
++    public static class PackagedExecutor implements Executor {
+         private final WorkStealingThreadPool internalPool;
+ 
+         public PackagedExecutor(@NotNull WorkStealingThreadPool internalPool) {

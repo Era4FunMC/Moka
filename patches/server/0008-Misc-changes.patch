@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 15 Jan 2023 09:58:00 +0800
+Subject: [PATCH] Misc changes
+
+
+diff --git a/src/main/java/net/minecraft/CrashReport.java b/src/main/java/net/minecraft/CrashReport.java
+index b5b6657e52e4f7a630229bd3ba433438af293e22..7860b059a9d374ab11e0bbd77fb555e8ba57d457 100644
+--- a/src/main/java/net/minecraft/CrashReport.java
++++ b/src/main/java/net/minecraft/CrashReport.java
+@@ -125,7 +125,7 @@ public class CrashReport {
+         stringbuilder.append("---- Minecraft Crash Report ----\n");
+         // Purpur start
+         stringbuilder.append("// ");
+-        stringbuilder.append("// DO NOT REPORT THIS TO PAPER! REPORT TO PURPUR INSTEAD!");
++        stringbuilder.append("// DO NOT REPORT THIS TO PAPER or PURPUR! REPORT TO HEARSE INSTEAD!");
+         // Purpur end
+         stringbuilder.append("// ");
+         stringbuilder.append(CrashReport.getErrorComment());
+diff --git a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+index 2d49774f195c2f72004319b2e35763c7071969f1..db9206f61055329dbe89b87efdb90ae863222b8a 100644
+--- a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
++++ b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+@@ -2,7 +2,6 @@ package org.bukkit.craftbukkit.event;
+ 
+ import com.google.common.base.Function;
+ import com.google.common.base.Functions;
+-import com.google.common.collect.Lists;
+ import com.mojang.datafixers.util.Either;
+ import java.net.InetAddress;
+ import java.util.ArrayList;
+@@ -57,6 +56,7 @@ import net.minecraft.world.phys.BlockHitResult;
+ import net.minecraft.world.phys.EntityHitResult;
+ import net.minecraft.world.phys.HitResult;
+ import net.minecraft.world.phys.Vec3;
++import org.apache.logging.log4j.LogManager;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location; // Paper
+ import org.bukkit.Material;
+@@ -1062,7 +1062,8 @@ public class CraftEventFactory {
+                 cause = DamageCause.CONTACT;
+             // Purpur end
+             } else {
+-                throw new IllegalStateException(String.format("Unhandled damage of %s by %s from %s", entity, damager, source.msgId));
++                cause = DamageCause.CUSTOM;
++                LogManager.getLogger().warn(String.format("Unhandled damage of %s by %s from %s", entity, damager, source.msgId));
+             }
+             EntityDamageEvent event = new EntityDamageByBlockEvent(damager, entity.getBukkitEntity(), cause, modifiers, modifierFunctions);
+             event.setCancelled(cancelled);
+@@ -1092,7 +1093,8 @@ public class CraftEventFactory {
+             } else if (source == DamageSource.MAGIC) {
+                 cause = DamageCause.MAGIC;
+             } else {
+-                throw new IllegalStateException(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.msgId));
++                LogManager.getLogger().error(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.msgId));
++                cause = DamageCause.CUSTOM;
+             }
+             EntityDamageEvent event = new EntityDamageByEntityEvent(damager, entity.getBukkitEntity(), cause, modifiers, modifierFunctions, source.isCritical()); // Paper - add critical damage API
+             event.setCancelled(cancelled);
+@@ -1143,11 +1145,12 @@ public class CraftEventFactory {
+         // Purpur end
+         }
+ 
+-        if (cause != null) {
+-            return CraftEventFactory.callEntityDamageEvent(null, entity, cause, modifiers, modifierFunctions, cancelled, source.isCritical()); // Paper - add critical damage API
++        if (cause == null) {
++            LogManager.getLogger().warn(String.format("Unhandled damage of %s from %s", entity, source.msgId));
++            cause = DamageCause.CUSTOM;
+         }
+-
+-        throw new IllegalStateException(String.format("Unhandled damage of %s from %s", entity, source.msgId));
++        
++        return CraftEventFactory.callEntityDamageEvent(null, entity, cause, modifiers, modifierFunctions, cancelled, source.isCritical()); // Paper - add critical damage API
+     }
+ 
+     @Deprecated // Paper - Add critical damage API

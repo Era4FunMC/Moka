@@ -1,0 +1,369 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sun, 2 Apr 2023 11:12:24 +0800
+Subject: [PATCH] Try fix some NPE errors
+
+
+diff --git a/src/main/java/com/kiocg/ChunkHot.java b/src/main/java/com/kiocg/ChunkHot.java
+index adf3701d132660bf2cd2d3578015ccdb9eb6bbd6..149d1e989295b275af9a9f71443f5212792ead07 100644
+--- a/src/main/java/com/kiocg/ChunkHot.java
++++ b/src/main/java/com/kiocg/ChunkHot.java
+@@ -3,33 +3,46 @@ package com.kiocg;
+ public class ChunkHot {
+     private static final int TIMES_LENGTH = 10;
+     private static int index = -1;
++    private static final Object GLOBAL_LOCK = new Object();
+ 
+     private final long[] times = new long[TIMES_LENGTH];
+     private long total;
+     private long nanos;
+ 
+     public static void nextTick() {
+-        index = ++index % TIMES_LENGTH;
++        synchronized (GLOBAL_LOCK){
++            index = ++index % TIMES_LENGTH;
++        }
+     }
+ 
+-    public synchronized void start() { //Hearse -- add synchronized to ensure thread safe
+-        total -= times[index];
+-        times[index] = 0L;
++    public void start() {
++        synchronized (GLOBAL_LOCK){ //Hearse -- add synchronized to ensure thread safe
++            total -= times[index];
++            times[index] = 0L;
++        }
+     }
+ 
+-    public synchronized void stop() { //Hearse -- add synchronized to ensure thread safe
+-        total += times[index];
++    public void stop() {
++        synchronized (GLOBAL_LOCK){ //Hearse -- add synchronized to ensure thread safe
++            total += times[index];
++        }
+     }
+ 
+-    public synchronized void startTicking() { //Hearse -- add synchronized to ensure thread safe
+-        nanos = System.nanoTime();
++    public void startTicking() {
++        synchronized (GLOBAL_LOCK){ //Hearse -- add synchronized to ensure thread safe
++            nanos = System.nanoTime();
++        }
+     }
+ 
+-    public synchronized void stopTickingAndCount() { //Hearse -- add synchronized to ensure thread safe
+-        times[index] += Math.min(System.nanoTime() - nanos, 1000000L);
++    public void stopTickingAndCount() {
++        synchronized (GLOBAL_LOCK){ //Hearse -- add synchronized to ensure thread safe
++            times[index] += Math.min(System.nanoTime() - nanos, 1000000L);
++        }
+     }
+ 
+-    public synchronized long getAverage() { //Hearse -- add synchronized to ensure thread safe
+-        return total / ((long) TIMES_LENGTH * 20L);
++    public long getAverage() {
++        synchronized (GLOBAL_LOCK){ //Hearse -- add synchronized to ensure thread safe
++            return total / ((long) TIMES_LENGTH * 20L);
++        }
+     }
+ }
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 7defb2ba77f85f9386cb450e90ab4df55ecb47fc..57e01c736ed1868fa8f96b103375397907a32f31 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -673,11 +673,14 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         if (this.dragonFight != null) {
+             this.dragonFight.tick();
+         }
++
++        this.tickBlockEntities();
++
+         org.spigotmc.ActivationRange.activateEntities(this); // Spigot
+         this.entityTickList.forEach((entity) -> {
+             ServerEntityTickHook.callAsyncEntityTick(entity,this);
+         });
+-        this.tickBlockEntities();
++
+     }
+ 
+     @Override
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/Sensing.java b/src/main/java/net/minecraft/world/entity/ai/sensing/Sensing.java
+index 58c6b1f67aedf5ab2167fd070604fc0d8f710435..94ec692e7a977c906f8276f57638293846417330 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/Sensing.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/Sensing.java
+@@ -6,10 +6,14 @@ import it.unimi.dsi.fastutil.ints.IntSets;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.Mob;
+ 
++import java.util.concurrent.locks.ReadWriteLock;
++import java.util.concurrent.locks.ReentrantReadWriteLock;
++
+ public class Sensing {
+     private final Mob mob;
+     private final IntSet seen = IntSets.synchronize(new IntOpenHashSet());
+     private final IntSet unseen = IntSets.synchronize(new IntOpenHashSet());
++    private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
+ 
+     public Sensing(Mob owner) {
+         this.mob = owner;
+@@ -22,21 +26,31 @@ public class Sensing {
+ 
+     public boolean hasLineOfSight(Entity entity) {
+         int i = entity.getId();
+-        if (this.seen.contains(i)) {
+-            return true;
+-        } else if (this.unseen.contains(i)) {
+-            return false;
+-        } else {
+-            //this.mob.level.getProfiler().push("hasLineOfSight"); // Purpur
+-            boolean bl = this.mob.hasLineOfSight(entity);
+-            //this.mob.level.getProfiler().pop(); // Purpur
++        this.readWriteLock.readLock().lock();
++        try {
++            if (this.seen.contains(i)) {
++                return true;
++            } else if (this.unseen.contains(i)) {
++                return false;
++            }
++        }finally {
++            this.readWriteLock.readLock().unlock();
++        }
++
++        //this.mob.level.getProfiler().push("hasLineOfSight"); // Purpur
++        boolean bl = this.mob.hasLineOfSight(entity);
++        //this.mob.level.getProfiler().pop(); // Purpur
++
++        this.readWriteLock.writeLock().lock();
++        try {
+             if (bl) {
+                 this.seen.add(i);
+             } else {
+                 this.unseen.add(i);
+             }
+-
+             return bl;
++        }finally {
++            this.readWriteLock.writeLock().unlock();
+         }
+     }
+ }
+diff --git a/src/main/java/net/minecraft/world/entity/monster/warden/AngerManagement.java b/src/main/java/net/minecraft/world/entity/monster/warden/AngerManagement.java
+index ece82743df21f0b776382821ad75dee96d0a0748..bf199786da6b790c57646b975cc47a941018d888 100644
+--- a/src/main/java/net/minecraft/world/entity/monster/warden/AngerManagement.java
++++ b/src/main/java/net/minecraft/world/entity/monster/warden/AngerManagement.java
+@@ -1,6 +1,7 @@
+ package net.minecraft.world.entity.monster.warden;
+ 
+ import com.google.common.annotations.VisibleForTesting;
++import com.google.common.collect.Lists;
+ import com.google.common.collect.Streams;
+ import com.mojang.datafixers.util.Pair;
+ import com.mojang.serialization.Codec;
+@@ -14,6 +15,8 @@ import java.util.Comparator;
+ import java.util.List;
+ import java.util.Optional;
+ import java.util.UUID;
++import java.util.concurrent.locks.Lock;
++import java.util.concurrent.locks.ReentrantLock;
+ import java.util.function.Predicate;
+ import java.util.stream.Collectors;
+ import javax.annotation.Nullable;
+@@ -45,6 +48,7 @@ public class AngerManagement {
+     protected final Object2IntMap<Entity> angerBySuspect;
+     @VisibleForTesting
+     protected final Object2IntMap<UUID> angerByUuid;
++    private final Lock accessLock = new ReentrantLock();
+ 
+     public static Codec<AngerManagement> codec(Predicate<Entity> suspectPredicate) {
+         return RecordCodecBuilder.create((instance) -> {
+@@ -66,56 +70,59 @@ public class AngerManagement {
+     }
+ 
+     private List<Pair<UUID, Integer>> createUuidAngerPairs() {
+-        return Streams.<Pair<UUID, Integer>>concat(this.suspects.stream().map((suspect) -> {
+-            return Pair.of(suspect.getUUID(), this.angerBySuspect.getInt(suspect));
+-        }), this.angerByUuid.object2IntEntrySet().stream().map((suspect) -> {
++        return Streams.<Pair<UUID, Integer>>concat(this.suspects.stream().map((suspect) -> Pair.of(suspect.getUUID(), this.angerBySuspect.getInt(suspect))), this.angerByUuid.object2IntEntrySet().stream().map((suspect) -> {
+             return Pair.of(suspect.getKey(), suspect.getIntValue());
+         })).collect(Collectors.toList());
+     }
+ 
+     public void tick(ServerLevel world, Predicate<Entity> suspectPredicate) {
+-        --this.conversionDelay;
+-        if (this.conversionDelay <= 0) {
+-            this.convertFromUuids(world);
+-            this.conversionDelay = 2;
++        if (!this.accessLock.tryLock()){
++            return;
+         }
++        try {
++            --this.conversionDelay;
++            if (this.conversionDelay <= 0) {
++                this.convertFromUuids(world);
++                this.conversionDelay = 2;
++            }
+ 
+-        ObjectIterator<Object2IntMap.Entry<UUID>> objectIterator = this.angerByUuid.object2IntEntrySet().iterator();
++            ObjectIterator<Object2IntMap.Entry<UUID>> objectIterator = this.angerByUuid.object2IntEntrySet().iterator();
+ 
+-        while(objectIterator.hasNext()) {
+-            Object2IntMap.Entry<UUID> entry = objectIterator.next();
+-            int i = entry.getIntValue();
+-            if (i <= 1) {
+-                objectIterator.remove();
+-            } else {
+-                entry.setValue(i - 1);
++            while(objectIterator.hasNext()) {
++                Object2IntMap.Entry<UUID> entry = objectIterator.next();
++                int i = entry.getIntValue();
++                if (i <= 1) {
++                    objectIterator.remove();
++                } else {
++                    entry.setValue(i - 1);
++                }
+             }
+-        }
+ 
+-        ObjectIterator<Object2IntMap.Entry<Entity>> objectIterator2 = this.angerBySuspect.object2IntEntrySet().iterator();
++            ObjectIterator<Object2IntMap.Entry<Entity>> objectIterator2 = this.angerBySuspect.object2IntEntrySet().iterator();
+ 
+-        while(objectIterator2.hasNext()) {
+-            Object2IntMap.Entry<Entity> entry2 = objectIterator2.next();
+-            int j = entry2.getIntValue();
+-            Entity entity = entry2.getKey();
+-            Entity.RemovalReason removalReason = entity.getRemovalReason();
+-            if (j > 1 && suspectPredicate.test(entity) && removalReason == null) {
+-                entry2.setValue(j - 1);
+-            } else {
+-                this.suspects.remove(entity);
+-                objectIterator2.remove();
+-                if (j > 1 && removalReason != null) {
+-                    switch (removalReason) {
+-                        case CHANGED_DIMENSION:
+-                        case UNLOADED_TO_CHUNK:
+-                        case UNLOADED_WITH_PLAYER:
+-                            this.angerByUuid.put(entity.getUUID(), j - 1);
++            while(objectIterator2.hasNext()) {
++                Object2IntMap.Entry<Entity> entry2 = objectIterator2.next();
++                int j = entry2.getIntValue();
++                Entity entity = entry2.getKey();
++                Entity.RemovalReason removalReason = entity.getRemovalReason();
++                if (j > 1 && suspectPredicate.test(entity) && removalReason == null) {
++                    entry2.setValue(j - 1);
++                } else {
++                    this.suspects.remove(entity);
++                    objectIterator2.remove();
++                    if (j > 1 && removalReason != null) {
++                        switch (removalReason) {
++                            case CHANGED_DIMENSION, UNLOADED_TO_CHUNK, UNLOADED_WITH_PLAYER ->
++                                    this.angerByUuid.put(entity.getUUID(), j - 1);
++                        }
+                     }
+                 }
+             }
+-        }
+ 
+-        this.sortAndUpdateHighestAnger();
++            this.sortAndUpdateHighestAnger();
++        }finally {
++            this.accessLock.unlock();
++        }
+     }
+ 
+     private void sortAndUpdateHighestAnger() {
+@@ -124,7 +131,6 @@ public class AngerManagement {
+         if (this.suspects.size() == 1) {
+             this.highestAnger = this.angerBySuspect.getInt(this.suspects.get(0));
+         }
+-
+     }
+ 
+     private void convertFromUuids(ServerLevel world) {
+@@ -144,46 +150,64 @@ public class AngerManagement {
+     }
+ 
+     public int increaseAnger(Entity entity, int amount) {
+-        boolean bl = !this.angerBySuspect.containsKey(entity);
+-        int i = this.angerBySuspect.computeInt(entity, (suspect, anger) -> {
+-            return Math.min(150, (anger == null ? 0 : anger) + amount); // Paper - diff on change
+-        });
+-        if (bl) {
+-            int j = this.angerByUuid.removeInt(entity.getUUID());
+-            i += j;
+-            this.angerBySuspect.put(entity, i);
+-            this.suspects.add(entity);
+-        }
++        this.accessLock.lock();
++        try {
++            boolean bl = !this.angerBySuspect.containsKey(entity);
++            int i = this.angerBySuspect.computeInt(entity, (suspect, anger) -> {
++                return Math.min(150, (anger == null ? 0 : anger) + amount); // Paper - diff on change
++            });
++            if (bl) {
++                int j = this.angerByUuid.removeInt(entity.getUUID());
++                i += j;
++                this.angerBySuspect.put(entity, i);
++                this.suspects.add(entity);
++            }
+ 
+-        this.sortAndUpdateHighestAnger();
+-        return i;
++            this.sortAndUpdateHighestAnger();
++            return i;
++        }finally {
++            this.accessLock.unlock();
++        }
+     }
+ 
+     public void clearAnger(Entity entity) {
+-        this.angerBySuspect.removeInt(entity);
+-        this.suspects.remove(entity);
+-        this.sortAndUpdateHighestAnger();
++        this.accessLock.lock();
++        try {
++            this.angerBySuspect.removeInt(entity);
++            this.suspects.remove(entity);
++            this.sortAndUpdateHighestAnger();
++        }finally {
++            this.accessLock.unlock();
++        }
+     }
+ 
+     @Nullable
+     private Entity getTopSuspect() {
+-        return this.suspects.stream().filter(this.filter).findFirst().orElse((Entity)null);
++        List<Entity> cop;
++        this.accessLock.lock();
++        try {
++            cop = Lists.newArrayList(this.suspects);
++        }finally {
++            this.accessLock.unlock();
++        }
++        return cop.stream().filter(this.filter).findFirst().orElse((Entity)null);
+     }
+ 
+     public int getActiveAnger(@Nullable Entity entity) {
+-        return entity == null ? this.highestAnger : this.angerBySuspect.getInt(entity);
++        this.accessLock.lock();
++        try {
++            return entity == null ? this.highestAnger : this.angerBySuspect.getInt(entity);
++        }finally {
++            this.accessLock.unlock();
++        }
+     }
+ 
+     public Optional<LivingEntity> getActiveEntity() {
+-        return Optional.ofNullable(this.getTopSuspect()).filter((suspect) -> {
+-            return suspect instanceof LivingEntity;
+-        }).map((suspect) -> {
+-            return (LivingEntity)suspect;
+-        });
++        return Optional.ofNullable(this.getTopSuspect()).filter((suspect) -> suspect instanceof LivingEntity).map((suspect) -> (LivingEntity)suspect);
+     }
+ 
+     @VisibleForTesting
+-    protected static record Sorter(AngerManagement angerManagement) implements Comparator<Entity> {
++    protected record Sorter(AngerManagement angerManagement) implements Comparator<Entity> {
+         @Override
+         public int compare(Entity entity, Entity entity2) {
+             if (entity.equals(entity2)) {
