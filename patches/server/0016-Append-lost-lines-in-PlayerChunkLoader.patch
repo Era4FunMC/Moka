@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 8 Apr 2023 18:40:23 +0800
+Subject: [PATCH] Append lost lines in PlayerChunkLoader
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java b/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java
+index 3e4fe3b63b05d10e5bd245df2ec18b12f6689fe0..82312c21b0fe17614b30b1fbf8a3fdb2687b59a8 100644
+--- a/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java
++++ b/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java
+@@ -557,9 +557,14 @@ public final class PlayerChunkLoader {
+             // send chunk
+             this.chunkSendQueue.remove(data);
+             final ChunkPriorityHolder queuedSend = data.sendQueue.pollFirst();
++
+             if (queuedSend == null) {
+                 concurrentChunkSends.getAndDecrement(); // we never sent, so decrease
+                 // stop iterating over players who have nothing to send
++                if (this.chunkSendQueue.isEmpty()) {
++                    // nothing left
++                    break;
++                }
+                 continue;
+             }
+ 
