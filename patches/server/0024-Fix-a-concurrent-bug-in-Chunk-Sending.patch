@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 8 Apr 2023 14:15:40 +0800
+Subject: [PATCH] Fix a concurrent bug in Chunk Sending
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java b/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java
+index 34372dac2a1ce5a9d93ff1fc02be102825d1623c..3e4fe3b63b05d10e5bd245df2ec18b12f6689fe0 100644
+--- a/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java
++++ b/src/main/java/io/papermc/paper/chunk/PlayerChunkLoader.java
+@@ -5,15 +5,18 @@ import com.destroystokyo.paper.util.misc.PooledLinkedHashSets;
+ import io.papermc.paper.configuration.GlobalConfiguration;
+ import io.papermc.paper.util.CoordinateUtils;
+ import io.papermc.paper.util.IntervalledCounter;
++import io.papermc.paper.util.MCUtil;
+ import io.papermc.paper.util.TickThread;
+ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+ import it.unimi.dsi.fastutil.longs.LongSet;
+ import it.unimi.dsi.fastutil.longs.LongSets;
+-import it.unimi.dsi.fastutil.objects.*;
++import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
++import it.unimi.dsi.fastutil.objects.Reference2ObjectLinkedOpenHashMap;
++import it.unimi.dsi.fastutil.objects.Reference2ObjectMap;
++import it.unimi.dsi.fastutil.objects.Reference2ObjectMaps;
+ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
+ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
+ import net.minecraft.network.protocol.game.ClientboundSetSimulationDistancePacket;
+-import io.papermc.paper.util.MCUtil;
+ import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.*;
+ import net.minecraft.util.Mth;
+@@ -561,6 +564,7 @@ public final class PlayerChunkLoader {
+             }
+ 
+             if (!this.isChunkPlayerLoaded(queuedSend.chunkX, queuedSend.chunkZ)) {
++                this.chunkSendQueue.add(data);
+                 continue;
+             }
+ 

@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 8 Apr 2023 13:59:26 +0800
+Subject: [PATCH] Remove a lock in EntityLookup
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 8b20d0c122fee0bd5ae02047a62be5e3f7efe72e..e517d62df5352651a6f3c140f5ed63e4327bd530 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -1,6 +1,5 @@
+ package io.papermc.paper.chunk.system.entity;
+ 
+-import me.earthme.moka.util.NoSuchChunkEntitySlicesFoundException;
+ import com.destroystokyo.paper.util.maplist.EntityList;
+ import com.mojang.logging.LogUtils;
+ import io.papermc.paper.chunk.system.ChunkSystem;
+@@ -15,6 +14,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+ import it.unimi.dsi.fastutil.objects.Object2ReferenceArrayMap;
+ import it.unimi.dsi.fastutil.objects.Object2ReferenceMap;
++import me.earthme.moka.util.NoSuchChunkEntitySlicesFoundException;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.server.level.ChunkHolder;
+ import net.minecraft.server.level.ServerLevel;
+@@ -46,7 +46,6 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     public final ServerLevel world;
+ 
+     private final StampedLock entityByLock = new StampedLock();
+-    private final Lock regionLoadLock = new ReentrantLock(true);
+ 
+     protected final Long2ObjectMap<ChunkSlicesRegion> regions = Long2ObjectMaps.synchronize(new Long2ObjectArrayMap<>());
+ 
+@@ -367,13 +366,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         if (!entity.isRemoved()) {
+             throw new IllegalStateException("Only call Entity#setRemoved to remove an entity");
+         }
+-        ChunkEntitySlices slices;
+-        this.regionLoadLock.lock();
+-        try {
+-            slices = this.getChunk(sectionX, sectionZ);
+-        }finally {
+-            this.regionLoadLock.unlock();
+-        }
++        ChunkEntitySlices slices = this.getChunk(sectionX, sectionZ);
+ 
+         // all entities should be in a chunk
+         if (slices == null) {
+@@ -417,14 +410,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         // ensure the old section is owned by this tick thread
+         TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main");
+ 
+-        ChunkEntitySlices old;
+-
+-        this.regionLoadLock.lock();
+-        try {
+-            old = this.getChunk(entity.sectionX, entity.sectionZ);
+-        }finally {
+-            this.regionLoadLock.unlock();
+-        }
++        ChunkEntitySlices old = this.getChunk(entity.sectionX, entity.sectionZ);
+ 
+         final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+ 
+@@ -648,17 +634,12 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         TickThread.ensureTickThread(this.world, chunkX, chunkZ, "Cannot load in entity section off-main");
+         synchronized (this) {
+             final ChunkEntitySlices curr = this.getChunk(chunkX, chunkZ);
+-            this.regionLoadLock.lock();
+-            try {
+-                if (curr != null) {
+-                    this.removeChunk(chunkX, chunkZ);
+-                    curr.mergeInto(slices);
+-                    this.addChunk(chunkX, chunkZ, slices);
+-                } else {
+-                    this.addChunk(chunkX, chunkZ, slices);
+-                }
+-            } finally {
+-                this.regionLoadLock.unlock();
++            if (curr != null) {
++                this.removeChunk(chunkX, chunkZ);
++                curr.mergeInto(slices);
++                this.addChunk(chunkX, chunkZ, slices);
++            } else {
++                this.addChunk(chunkX, chunkZ, slices);
+             }
+         }
+     }
