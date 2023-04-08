@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 8 Apr 2023 17:43:30 +0800
+Subject: [PATCH] Misc changes
+
+
+diff --git a/src/main/java/net/minecraft/CrashReport.java b/src/main/java/net/minecraft/CrashReport.java
+index b5b6657e52e4f7a630229bd3ba433438af293e22..7860b059a9d374ab11e0bbd77fb555e8ba57d457 100644
+--- a/src/main/java/net/minecraft/CrashReport.java
++++ b/src/main/java/net/minecraft/CrashReport.java
+@@ -125,7 +125,7 @@ public class CrashReport {
+         stringbuilder.append("---- Minecraft Crash Report ----\n");
+         // Purpur start
+         stringbuilder.append("// ");
+-        stringbuilder.append("// DO NOT REPORT THIS TO PAPER! REPORT TO PURPUR INSTEAD!");
++        stringbuilder.append("// DO NOT REPORT THIS TO PAPER or PURPUR! REPORT TO HEARSE INSTEAD!");
+         // Purpur end
+         stringbuilder.append("// ");
+         stringbuilder.append(CrashReport.getErrorComment());
+diff --git a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+index 16261aa799c34d7134f4c1489e2ab0a5db7992f0..43d2f9b766b3f87ec6f15d6dbadaec2c4f7d1c94 100644
+--- a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
++++ b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+@@ -59,6 +59,7 @@ import net.minecraft.world.phys.BlockHitResult;
+ import net.minecraft.world.phys.EntityHitResult;
+ import net.minecraft.world.phys.HitResult;
+ import net.minecraft.world.phys.Vec3;
++import org.apache.logging.log4j.LogManager;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location; // Paper
+ import org.bukkit.Material;
+@@ -1060,7 +1061,8 @@ public class CraftEventFactory {
+             } else if (source.is(DamageTypes.IN_FIRE)) {
+                 cause = DamageCause.FIRE;
+             } else {
+-                throw new IllegalStateException(String.format("Unhandled damage of %s by %s from %s", entity, damager, source.getMsgId()));
++                cause = DamageCause.CUSTOM;
++                LogManager.getLogger().warn(String.format("Unhandled damage of %s by %s from %s", entity, damager, source.getMsgId()));
+             }
+             EntityDamageEvent event = new EntityDamageByBlockEvent(damager, entity.getBukkitEntity(), cause, modifiers, modifierFunctions);
+             event.setCancelled(cancelled);
+@@ -1090,7 +1092,8 @@ public class CraftEventFactory {
+             } else if (source.is(DamageTypes.MAGIC)) {
+                 cause = DamageCause.MAGIC;
+             } else {
+-                throw new IllegalStateException(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.getMsgId()));
++                LogManager.getLogger().error(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.msgId));
++                cause = DamageCause.CUSTOM;
+             }
+             EntityDamageEvent event = new EntityDamageByEntityEvent(damager, entity.getBukkitEntity(), cause, modifiers, modifierFunctions, source.isCritical()); // Paper - add critical damage API
+             event.setCancelled(cancelled);
+@@ -1137,11 +1140,12 @@ public class CraftEventFactory {
+             cause = DamageCause.CUSTOM;
+         }
+ 
+-        if (cause != null) {
+-            return CraftEventFactory.callEntityDamageEvent(null, entity, cause, modifiers, modifierFunctions, cancelled, source.isCritical()); // Paper - add critical damage API
++        if (cause == null) {
++            LogManager.getLogger().warn(String.format("Unhandled damage of %s from %s", entity, source.msgId));
++            cause = DamageCause.CUSTOM;
+         }
+ 
+-        throw new IllegalStateException(String.format("Unhandled damage of %s from %s", entity, source.getMsgId()));
++        return CraftEventFactory.callEntityDamageEvent(null, entity, cause, modifiers, modifierFunctions, cancelled, source.isCritical()); // Paper - add critical damage API
+     }
+ 
+     @Deprecated // Paper - Add critical damage API

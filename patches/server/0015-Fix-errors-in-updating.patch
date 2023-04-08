@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 8 Apr 2023 18:01:36 +0800
+Subject: [PATCH] Fix errors in updating
+
+
+diff --git a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+index 43d2f9b766b3f87ec6f15d6dbadaec2c4f7d1c94..8433b5997f8099de3ac83b1b9f1234ab747436db 100644
+--- a/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
++++ b/src/main/java/org/bukkit/craftbukkit/event/CraftEventFactory.java
+@@ -1092,7 +1092,7 @@ public class CraftEventFactory {
+             } else if (source.is(DamageTypes.MAGIC)) {
+                 cause = DamageCause.MAGIC;
+             } else {
+-                LogManager.getLogger().error(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.msgId));
++                LogManager.getLogger().error(String.format("Unhandled damage of %s by %s from %s", entity, damager.getHandle(), source.getMsgId()));
+                 cause = DamageCause.CUSTOM;
+             }
+             EntityDamageEvent event = new EntityDamageByEntityEvent(damager, entity.getBukkitEntity(), cause, modifiers, modifierFunctions, source.isCritical()); // Paper - add critical damage API
+@@ -1141,7 +1141,7 @@ public class CraftEventFactory {
+         }
+ 
+         if (cause == null) {
+-            LogManager.getLogger().warn(String.format("Unhandled damage of %s from %s", entity, source.msgId));
++            LogManager.getLogger().warn(String.format("Unhandled damage of %s from %s", entity, source.getMsgId()));
+             cause = DamageCause.CUSTOM;
+         }
+ 

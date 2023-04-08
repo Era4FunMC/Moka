@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 8 Apr 2023 17:58:02 +0800
+Subject: [PATCH] Fix some threading problems in bukkit event system
+
+
+diff --git a/src/main/java/org/bukkit/Server.java b/src/main/java/org/bukkit/Server.java
+index 730caafaf9629664ba125f3884559da76616f655..baf831ad157602a3b1a166de232129bef739483b 100644
+--- a/src/main/java/org/bukkit/Server.java
++++ b/src/main/java/org/bukkit/Server.java
+@@ -1486,6 +1486,12 @@ public interface Server extends PluginMessageRecipient, net.kyori.adventure.audi
+      */
+     boolean isPrimaryThread();
+ 
++    //Hearse start
++    /**
++     * Get current thread is worker or other
++     */
++    boolean isWorkerThread();
++
+     // Paper start
+     /**
+      * Gets the message that is displayed on the server list.
+diff --git a/src/main/java/org/bukkit/plugin/SimplePluginManager.java b/src/main/java/org/bukkit/plugin/SimplePluginManager.java
+index 899d67fa782fac639fe7fb096e05c551d75bd647..73041cdeec47a5a485108eb0011cd3ad9b0380fb 100644
+--- a/src/main/java/org/bukkit/plugin/SimplePluginManager.java
++++ b/src/main/java/org/bukkit/plugin/SimplePluginManager.java
+@@ -607,6 +607,8 @@ public final class SimplePluginManager implements PluginManager {
+         }
+     }
+ 
++    private final Object eventLock = new Object(); //Hearse ensure event system thread safe
++
+     /**
+      * Calls an event with the given details.
+      *
+@@ -632,6 +634,20 @@ public final class SimplePluginManager implements PluginManager {
+     }
+ 
+     private void fireEvent(@NotNull Event event) {
++        //Hearse start
++        if (server.isWorkerThread()){
++            synchronized (this.eventLock){
++                this.fireCallEvent(event);
++            }
++            return;
++        }
++
++        this.fireCallEvent(event);
++        //Hearse end
++    }
++
++    //Hearse start - split to a new method
++    private void fireCallEvent(Event event){
+         HandlerList handlers = event.getHandlers();
+         RegisteredListener[] listeners = handlers.getRegisteredListeners();
+ 
+@@ -653,7 +669,7 @@ public final class SimplePluginManager implements PluginManager {
+                             plugin.getDescription().getAuthors(),
+                             plugin.getDescription().getFullName(),
+                             ex.getMessage()
+-                            ));
++                    ));
+                 }
+             } catch (Throwable ex) {
+                 gg.pufferfish.pufferfish.sentry.SentryContext.setEventContext(event, registration); // Pufferfish
+@@ -668,6 +684,7 @@ public final class SimplePluginManager implements PluginManager {
+             }
+         }
+     }
++    //Hearse end
+ 
+     @Override
+     public void registerEvents(@NotNull Listener listener, @NotNull Plugin plugin) {
