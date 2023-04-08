@@ -1,0 +1,647 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Sat, 8 Apr 2023 08:06:29 +0800
+Subject: [PATCH] Optimize entity thread pool
+
+
+diff --git a/src/main/java/me/earthme/moka/Moka.java b/src/main/java/me/earthme/moka/Moka.java
+index aabc6006dcac7e89e87f5d914c215d164bdd9d8d..e520f342623fb15158615127601f1c2d28cbedaa 100644
+--- a/src/main/java/me/earthme/moka/Moka.java
++++ b/src/main/java/me/earthme/moka/Moka.java
+@@ -12,8 +12,8 @@ public class Moka {
+     public static void initAll(){
+         MokaConfig.init();
+         ServerEntityTickHook.init();
+-        MinecraftServer.getServer().server.getCommandMap().register("workers","hearse",new WorkerCommand());
+-        MinecraftServer.getServer().server.getCommandMap().register("entitycount","hearse",new EntityCountCommand());
++        MinecraftServer.getServer().server.getCommandMap().register("workers","moka",new WorkerCommand());
++        MinecraftServer.getServer().server.getCommandMap().register("entitycount","moka",new EntityCountCommand());
+     }
+ 
+     public static void onServerStop(){
+diff --git a/src/main/java/me/earthme/moka/MokaConfig.java b/src/main/java/me/earthme/moka/MokaConfig.java
+index 765d00d0e1afb30ff230acbfb6b53cc6ecef6643..e33f56a8430a8db6fe81ba12c6777b6a1ef61a4b 100644
+--- a/src/main/java/me/earthme/moka/MokaConfig.java
++++ b/src/main/java/me/earthme/moka/MokaConfig.java
+@@ -2,6 +2,7 @@ package me.earthme.moka;
+ 
+ import org.bukkit.configuration.InvalidConfigurationException;
+ import org.bukkit.configuration.file.YamlConfiguration;
++
+ import java.io.File;
+ import java.io.IOException;
+ 
+diff --git a/src/main/java/me/earthme/moka/commands/EntityCountCommand.java b/src/main/java/me/earthme/moka/commands/EntityCountCommand.java
+index efdabacf5fed688076fc65d22cb0d908d9190c19..c5bcbb1758fd677c4a9327eff3cc7e8e3c689326 100644
+--- a/src/main/java/me/earthme/moka/commands/EntityCountCommand.java
++++ b/src/main/java/me/earthme/moka/commands/EntityCountCommand.java
+@@ -8,6 +8,7 @@ import org.bukkit.ChatColor;
+ import org.bukkit.command.Command;
+ import org.bukkit.command.CommandSender;
+ import org.jetbrains.annotations.NotNull;
++
+ import java.util.Map;
+ 
+ public class EntityCountCommand extends Command {
+diff --git a/src/main/java/me/earthme/moka/commands/WorkerCommand.java b/src/main/java/me/earthme/moka/commands/WorkerCommand.java
+index cff840620af15b8c8eeea3ca91b7dc7be9bf857c..371fbf73698e7079ce4cab1a940a2992250638bd 100644
+--- a/src/main/java/me/earthme/moka/commands/WorkerCommand.java
++++ b/src/main/java/me/earthme/moka/commands/WorkerCommand.java
+@@ -1,11 +1,12 @@
+ package me.earthme.moka.commands;
+ 
+ import me.earthme.moka.Moka;
+-import me.earthme.moka.concurrent.WorkerThreadPoolExecutor;
++import me.earthme.moka.concurrent.WorkerThreadPool;
+ import org.bukkit.ChatColor;
+ import org.bukkit.command.Command;
+ import org.bukkit.command.CommandSender;
+ import org.jetbrains.annotations.NotNull;
++
+ import java.util.ArrayList;
+ import java.util.List;
+ import java.util.Map;
+@@ -27,7 +28,7 @@ public class WorkerCommand extends Command {
+             ret.add("forceStop");
+         }
+         if (args.length == 2){
+-            for (Map.Entry<String, WorkerThreadPoolExecutor> entry : Moka.getWorkerManager().getManagedWorkers().entrySet()){
++            for (Map.Entry<String, WorkerThreadPool> entry : Moka.getWorkerManager().getManagedWorkers().entrySet()){
+                 ret.add(entry.getKey());
+             }
+         }
+@@ -39,31 +40,18 @@ public class WorkerCommand extends Command {
+         if (args.length >= 2){
+             final String action = args[0];
+             final String workerName = args[1];
+-            final WorkerThreadPoolExecutor searchedWorker = Moka.getWorkerManager().getTargetWorker(workerName);
++            final WorkerThreadPool searchedWorker = Moka.getWorkerManager().getTargetWorker(workerName);
+             if (searchedWorker == null){
+                 sender.sendMessage(ChatColor.RED+"Target worker not found!");
+                 return true;
+             }
+-            switch (action){
+-                case "status":
+-                    sender.sendMessage(ChatColor.GREEN+"Worker: "+workerName+" Status:"+ searchedWorker);
+-                    break;
+-                case "setThreadCount":
+-                    if (args.length == 3){
+-                        try {
+-                            searchedWorker.setCorePoolSize(Integer.parseInt(args[2]));
+-                            sender.sendMessage(ChatColor.GREEN+"Finished!");
+-                        }catch (NumberFormatException e){
+-                            sender.sendMessage(ChatColor.RED+"Please supply an integer!");
+-                        }
+-                    }else{
+-                        sender.sendMessage(ChatColor.RED+"Please supply an integer!");
+-                    }
+-                    break;
+-                case "forceStop":
+-                    searchedWorker.shutdownNow();
+-                    sender.sendMessage(ChatColor.YELLOW+"Worker "+workerName+" has been stopped!");
+-                    break;
++            switch (action) {
++                case "status" ->
++                        sender.sendMessage(ChatColor.GREEN + "Worker: " + workerName + " Status:" + searchedWorker);
++                case "forceStop" -> {
++                    searchedWorker.terminateNow();
++                    sender.sendMessage(ChatColor.YELLOW + "Worker " + workerName + " has been stopped!");
++                }
+             }
+             return true;
+         }
+diff --git a/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java b/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
+index 65142de415dbd3da3bb24e18efb5ff5e6a03e3fd..dff9a13ed7f4ecf59f9bbaa25d18835345cfab1d 100644
+--- a/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
++++ b/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
+@@ -1,87 +1,140 @@
+ package me.earthme.moka.concurrent;
+ 
+ import com.google.common.collect.Lists;
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
+ import org.jetbrains.annotations.NotNull;
+ import org.jetbrains.annotations.Nullable;
+ 
+-import java.util.*;
+-import java.util.concurrent.*;
+-import java.util.concurrent.atomic.*;
+-import java.util.concurrent.locks.*;
+-
+-public class WorkStealingThreadPool {
+-    private final Executor packaged = new PackagedExecutor(this);
+-    private final List<WorkerThread> workers = Lists.newCopyOnWriteArrayList();
++import java.util.Collection;
++import java.util.Deque;
++import java.util.List;
++import java.util.concurrent.Callable;
++import java.util.concurrent.ConcurrentLinkedDeque;
++import java.util.concurrent.Future;
++import java.util.concurrent.FutureTask;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.locks.LockSupport;
++
++public class WorkStealingThreadPool implements WorkerThreadPool{
++    private static final Logger logger = LogManager.getLogger();
++
++    private WorkerThread[] workerThreads = null;
++    private final ExceptionHandler exceptionHandler;
++    private volatile boolean creatingThreads = false;
+     private final WorkerThreadFactory factory;
+     private int lastPostedPos = 0;
+ 
+-    public WorkStealingThreadPool(int nThreads, WorkerThreadFactory factory) {
++    public WorkStealingThreadPool(int nThreads, ExceptionHandler exceptionHandler, WorkerThreadFactory factory) {
++        this.exceptionHandler = exceptionHandler;
+         this.factory = factory;
+         this.runWorkers(nThreads);
+     }
+ 
+-    private void sendStopToAll() {
+-        for (WorkerThread workerThread : this.workers) {
+-            workerThread.sendStop();
+-        }
++    public WorkStealingThreadPool(int nThreads,WorkerThreadFactory factory){
++        this(nThreads,(exception,thread)->{
++            logger.warn("Worker {} has a exception:{}",thread.getName(),exception);
++            exception.printStackTrace();
++        },factory);
+     }
+ 
+-    @NotNull
+-    public Executor getPackaged() {
+-        return this.packaged;
++    private void runWorkers(int threadCount) {
++        this.creatingThreads = true;
++        try {
++            this.workerThreads = new WorkerThread[threadCount];
++            for (int i = 0; i < threadCount; i++) {
++                final WorkerThread workerThread = new WorkerThread();
++                this.workerThreads[i] = workerThread;
++                workerThread.start();
++            }
++        }finally {
++            this.creatingThreads = false;
++        }
+     }
+ 
+-    private void runWorkers(int threadCount) {
+-        for (int i = 0; i < threadCount; i++) {
+-            final WorkerThread workerThread = new WorkerThread();
+-            this.workers.add(workerThread);
+-            workerThread.start();
++    @Override
++    public void postTask(@NotNull Runnable task) {
++        int workerIndex;
++        if (this.lastPostedPos + 1 >= this.workerThreads.length) {
++            this.lastPostedPos = 0;
+         }
++        workerIndex = this.lastPostedPos++;
++
++        final WorkerThread workerThread = this.workerThreads[workerIndex];
++        workerThread.postRunnable(task);
++    }
++
++    @Override
++    public Future<?> postTask(Callable<?> task) {
++        final FutureTask<?> futureTask = new FutureTask<>(task);
++        this.postTask(futureTask);
++        return futureTask;
+     }
+ 
+-    public void awaitTasks() {
+-        for (WorkerThread workerThread : this.workers) {
+-            workerThread.awaitTasks();
++
++    @Override
++    public void terminate() {
++        for (WorkerThread workerThread : this.workerThreads) {
++            workerThread.sendStop();
++        }
++
++        for (WorkerThread workerThread : this.workerThreads){
++            workerThread.awaitTerminate();
+         }
++
++        this.workerThreads = null;
+     }
+ 
+-    public void postTask(@NotNull Runnable task) {
+-        int workerIndex;
+-        synchronized (this.workers) {
+-            if (this.lastPostedPos + 1 >= this.workers.size()) {
+-                this.lastPostedPos = 0;
+-            }
+-            workerIndex = this.lastPostedPos++;
++    @Override
++    public void terminateNow() {
++        this.dropAllTasks();
++        this.terminate();
++    }
++
++    @Override
++    public Collection<? extends Runnable> dropAllTasks() {
++        final List<Runnable> taskList = Lists.newArrayList();
++
++        for (WorkerThread workerThread : this.workerThreads){
++            taskList.addAll(workerThread.dropAllTask());
+         }
+-        final WorkerThread workerThread = this.workers.get(workerIndex);
+-        workerThread.postRunnable(task);
++
++        return taskList;
+     }
+ 
+-    public <T> Future<T> postTask(@NotNull Callable<T> task) {
+-        final FutureTask<T> newTask = new FutureTask<>(task);
+-        this.postTask(newTask);
+-        return newTask;
++    private interface ExceptionHandler{
++        void handle(Exception exception,Thread thread);
+     }
+ 
+     private class WorkerThread implements Runnable {
+-        private final Deque<Runnable> tasks = new ArrayDeque<>();
+-        private final ReadWriteLock taskLock = new ReentrantReadWriteLock();
++        private final Deque<Runnable> tasks = new ConcurrentLinkedDeque<>();
+         private final AtomicBoolean runningTask = new AtomicBoolean();
+         private final Thread worker = WorkStealingThreadPool.this.factory.getNewThread(this);
+ 
+         private volatile boolean shouldRun = false;
+         private volatile boolean running = false;
++        private volatile boolean block = false;
+ 
+ 
+-        public void postRunnable(@NotNull Runnable task) {
+-            this.taskLock.writeLock().lock();
++        @NotNull
++        protected Collection<Runnable> dropAllTask(){
++            this.block = true;
+             try {
+-                this.tasks.add(task);
+-            } finally {
+-                this.taskLock.writeLock().unlock();
++                final List<Runnable> taskList = Lists.newArrayList();
++                Runnable task;
++                while ((task = this.tasks.poll())!=null){
++                    taskList.add(task);
++                }
++                return taskList;
++            }finally {
++                this.block = false;
+             }
+         }
+ 
++        public void postRunnable(@NotNull Runnable task) {
++            this.tasks.offer(task);
++        }
++
+         public void sendStop() {
+             this.shouldRun = false;
+             LockSupport.unpark(this.worker);
+@@ -93,7 +146,7 @@ public class WorkStealingThreadPool {
+             }
+         }
+ 
+-        public void awaitTasks() {
++        public void awaitTask() {
+             while (this.runningTask.get()) {
+                 LockSupport.parkNanos(100000);
+             }
+@@ -104,28 +157,30 @@ public class WorkStealingThreadPool {
+             Runnable curTask;
+             Runnable stole;
+             while (this.shouldRun || !this.tasks.isEmpty()) {
+-                if ((curTask = this.pollTask(false)) != null) {
+-                    this.runningTask.set(true);
+-                    try {
+-                        curTask.run();
+-                    } catch (Exception e) {
+-                        e.printStackTrace();
+-                    } finally {
+-                        this.runningTask.set(false);
++                if (!this.block){
++                    if ((curTask = this.pollTask(false)) != null) {
++                        this.runningTask.set(true);
++                        try {
++                            curTask.run();
++                        } catch (Exception e) {
++                            WorkStealingThreadPool.this.exceptionHandler.handle(e,this.worker);
++                        } finally {
++                            this.runningTask.set(false);
++                        }
++                        continue;
+                     }
+-                    continue;
+-                }
+ 
+-                if ((stole = this.steal()) != null) {
+-                    try {
+-                        stole.run();
+-                    } catch (Exception e) {
+-                        e.printStackTrace();
++                    if ((stole = this.steal()) != null) {
++                        try {
++                            stole.run();
++                        } catch (Exception e) {
++                            WorkStealingThreadPool.this.exceptionHandler.handle(e,this.worker);
++                        }
++                        continue;
+                     }
+-                    continue;
+                 }
+ 
+-                LockSupport.parkNanos("FREE WAITING", 1000000);
++                LockSupport.parkNanos("IDLE", 1000000);
+             }
+             this.running = false;
+         }
+@@ -137,26 +192,30 @@ public class WorkStealingThreadPool {
+         }
+ 
+         @Nullable
+-        private Runnable steal() {
+-            for (WorkerThread workerThread : WorkStealingThreadPool.this.workers) {
++        protected Runnable steal() {
++            if (WorkStealingThreadPool.this.creatingThreads){
++                return null;
++            }
++
++            for (WorkerThread workerThread : WorkStealingThreadPool.this.workerThreads) {
+                 if (workerThread.equals(this)) {
+                     continue;
+                 }
+-                if (workerThread.isCurrentThreadRunningTask() && workerThread.getQueuedTaskCount() >= 1) {
++
++                if ((workerThread.isCurrentThreadRunningTask() || workerThread.isBlocking()) && workerThread.getQueuedTaskCount() > 0) {
+                     return workerThread.pollTask(true);
+                 }
+             }
+             return null;
+         }
+ 
++        protected boolean isBlocking(){
++            return this.block;
++        }
++
+ 
+         protected int getQueuedTaskCount() {
+-            this.taskLock.readLock().lock();
+-            try {
+-                return this.tasks.size();
+-            } finally {
+-                this.taskLock.readLock().unlock();
+-            }
++            return this.tasks.size();
+         }
+ 
+         protected boolean isCurrentThreadRunningTask() {
+@@ -165,29 +224,7 @@ public class WorkStealingThreadPool {
+ 
+         @Nullable
+         protected Runnable pollTask(boolean tail) {
+-            Runnable polledRunnable;
+-
+-            this.taskLock.writeLock().lock();
+-            try {
+-                polledRunnable = tail ? this.tasks.pollLast() : this.tasks.pollFirst();
+-            } finally {
+-                this.taskLock.writeLock().unlock();
+-            }
+-
+-            return polledRunnable;
+-        }
+-    }
+-
+-    public static class PackagedExecutor implements Executor {
+-        private final WorkStealingThreadPool internalPool;
+-
+-        public PackagedExecutor(@NotNull WorkStealingThreadPool internalPool) {
+-            this.internalPool = internalPool;
+-        }
+-
+-        @Override
+-        public void execute(@NotNull Runnable command) {
+-            this.internalPool.postTask(command);
++            return tail ? this.tasks.pollLast() : this.tasks.pollFirst();
+         }
+     }
+ }
+\ No newline at end of file
+diff --git a/src/main/java/me/earthme/moka/concurrent/WorkerThreadPool.java b/src/main/java/me/earthme/moka/concurrent/WorkerThreadPool.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..52f751438cd5d063ef25367d17df4a8577446e95
+--- /dev/null
++++ b/src/main/java/me/earthme/moka/concurrent/WorkerThreadPool.java
+@@ -0,0 +1,17 @@
++package me.earthme.moka.concurrent;
++
++import java.util.Collection;
++import java.util.concurrent.Callable;
++import java.util.concurrent.Future;
++
++public interface WorkerThreadPool{
++    void terminate();
++
++    void terminateNow();
++
++    Collection<? extends Runnable> dropAllTasks();
++
++    void postTask(Runnable task);
++
++    Future<?> postTask(Callable<?> task);
++}
+diff --git a/src/main/java/me/earthme/moka/concurrent/WorkerThreadPoolExecutor.java b/src/main/java/me/earthme/moka/concurrent/WorkerThreadPoolExecutor.java
+index 6a02112d55c317e326d155448e0c50d52b2bc558..f14fd670022a7a7d3671a43af5a2e08ef2b28742 100644
+--- a/src/main/java/me/earthme/moka/concurrent/WorkerThreadPoolExecutor.java
++++ b/src/main/java/me/earthme/moka/concurrent/WorkerThreadPoolExecutor.java
+@@ -1,12 +1,15 @@
+ package me.earthme.moka.concurrent;
+ 
++import com.google.common.collect.Lists;
+ import org.jetbrains.annotations.NotNull;
+ 
++import java.util.Collection;
++import java.util.List;
+ import java.util.Queue;
+ import java.util.concurrent.*;
+ import java.util.concurrent.locks.LockSupport;
+ 
+-public class WorkerThreadPoolExecutor extends ThreadPoolExecutor {
++public class WorkerThreadPoolExecutor extends ThreadPoolExecutor implements WorkerThreadPool{
+     private final Queue<TaskEntry> taskEntries = new ConcurrentLinkedQueue<>();
+ 
+     public WorkerThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, @NotNull TimeUnit unit, @NotNull BlockingQueue<Runnable> workQueue, @NotNull WorkerThreadFactory workerThreadFactory) {
+@@ -40,6 +43,33 @@ public class WorkerThreadPoolExecutor extends ThreadPoolExecutor {
+         }
+     }
+ 
++    @Override
++    public void terminate() {
++        this.shutdown();
++    }
++
++    @Override
++    public void terminateNow() {
++        this.shutdownNow();
++    }
++
++    @Override
++    public Collection<? extends Runnable> dropAllTasks() {
++        final List<Runnable> tasks = Lists.newArrayList();
++        this.getQueue().drainTo(tasks);
++        return tasks;
++    }
++
++    @Override
++    public void postTask(Runnable task) {
++        this.execute(task);
++    }
++
++    @Override
++    public Future<?> postTask(Callable<?> task) {
++        return this.submit(task);
++    }
++
+     private static class TaskEntry implements Runnable{
+         private final Runnable mainTask;
+         private final Runnable subTask;
+diff --git a/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java b/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
+index bd866fcde4335bfd2ea17e3c9159d2965d3cf128..817541d061a592216652a69b3aa6aa7927800344 100644
+--- a/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
++++ b/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
+@@ -1,10 +1,11 @@
+ package me.earthme.moka.concurrent.threadfactory;
+ 
+-import me.earthme.moka.concurrent.thread.WorkerThread;
+-import me.earthme.moka.concurrent.WorkerThreadFactory;
+ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+ import it.unimi.dsi.fastutil.objects.ObjectLists;
++import me.earthme.moka.concurrent.WorkerThreadFactory;
++import me.earthme.moka.concurrent.thread.WorkerThread;
+ import net.minecraft.server.MinecraftServer;
++
+ import java.util.List;
+ import java.util.concurrent.atomic.AtomicInteger;
+ 
+diff --git a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+index 2eef50c12a14e329e6cc1b0f04313f5479d21f83..a5e0e3f5d40318a2f14ddaee055b7f42a3639e22 100644
+--- a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+@@ -1,5 +1,6 @@
+ package me.earthme.moka.server;
+ 
++import me.earthme.moka.Moka;
+ import me.earthme.moka.MokaConfig;
+ import me.earthme.moka.concurrent.WorkStealingThreadPool;
+ import me.earthme.moka.concurrent.WorkerThreadFactory;
+@@ -40,6 +41,7 @@ public class ServerEntityTickHook {
+                     workerCount,
+                     defFactory
+             );
++            Moka.getWorkerManager().addWorker("entity",worker);
+         }
+     }
+ 
+diff --git a/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java b/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
+index 125a6380743dd76d8bc61009efa5caa62adabf88..07c556c830cd419ceeb90ac4f3c6b370e9158275 100644
+--- a/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
++++ b/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
+@@ -3,8 +3,9 @@ package me.earthme.moka.util;
+ import org.jetbrains.annotations.NotNull;
+ 
+ import java.util.*;
+-import java.util.concurrent.*;
+-import java.util.concurrent.locks.*;
++import java.util.concurrent.BlockingQueue;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.locks.StampedLock;
+ 
+ public class ArrayListBlockingQueue<T> implements BlockingQueue<T> {
+     private final List<T> internalList = new ArrayList<>();
+diff --git a/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+index ceaf949d6b920495a68502884fe5b797ce5c57b9..455a1eb92ddd5a301d27395518d4998269c3ffab 100644
+--- a/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
++++ b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+@@ -1,68 +1,43 @@
+ package me.earthme.moka.workers;
+ 
+-import me.earthme.moka.concurrent.WorkerThreadPoolExecutor;
+ import com.google.common.collect.Maps;
++import me.earthme.moka.concurrent.WorkerThreadPool;
++
+ import java.util.List;
+ import java.util.Map;
+-import java.util.concurrent.TimeUnit;
+ 
+ public class WorkerThreadPoolManager {
+-    private final Map<String,WorkerThreadPoolExecutor> managedWorkers = Maps.newConcurrentMap();
++    private final Map<String, WorkerThreadPool> managedWorkers = Maps.newHashMap();
+ 
+-    public void addWorker(String bound,WorkerThreadPoolExecutor worker){
++    public void addWorker(String bound,WorkerThreadPool worker){
+         this.managedWorkers.put(bound,worker);
+     }
+ 
+     public void shutdownAll() throws InterruptedException {
+-        for (WorkerThreadPoolExecutor worker : this.managedWorkers.values()){
+-            if (!worker.isShutdown()){
+-                worker.getQueue().clear(); //Clear the tasks.We don't need wait them
+-                worker.shutdown();
+-                while (worker.awaitTermination(100, TimeUnit.MILLISECONDS)); {}
+-            }
++        for (WorkerThreadPool worker : this.managedWorkers.values()){
++            worker.terminateNow();
+         }
++        this.managedWorkers.clear();
+     }
+ 
+     @Deprecated
+-    public Map<String, WorkerThreadPoolExecutor> getManagedWorkers() {
++    public Map<String, WorkerThreadPool> getManagedWorkers() {
+         return Maps.newHashMap(this.managedWorkers);
+     }
+ 
+     @Deprecated
+-    public WorkerThreadPoolExecutor getTargetWorker(String bound){
++    public WorkerThreadPool getTargetWorker(String bound){
+         return this.managedWorkers.get(bound);
+     }
+ 
+     public Map<String,List<Runnable>> shutdownAllNow(){
+         final Map<String,List<Runnable>> ret = Maps.newHashMap();
+-        for (Map.Entry<String,WorkerThreadPoolExecutor> entry : this.managedWorkers.entrySet()){
++        for (Map.Entry<String,WorkerThreadPool> entry : this.managedWorkers.entrySet()){
+             final String workerName = entry.getKey();
+-            final WorkerThreadPoolExecutor worker = entry.getValue();
+-            if (!worker.isShutdown()){
+-                try {
+-                    final List<Runnable> taskNotRunned = worker.shutdownNow();
+-                    ret.put(workerName,taskNotRunned);
+-                }catch (Exception e){
+-                    e.printStackTrace();
+-                }
+-            }
++            final WorkerThreadPool worker = entry.getValue();
++            ret.put(workerName, (List<Runnable>) worker.dropAllTasks());
++            worker.terminateNow();
+         }
+         return ret;
+     }
+-
+-    public void shutdownAll(long singleWorkerAwaitTimeOutCount) throws InterruptedException {
+-        long counter = singleWorkerAwaitTimeOutCount;
+-        for (WorkerThreadPoolExecutor worker : this.managedWorkers.values()){
+-            if (!worker.isShutdown()){
+-                worker.shutdown();
+-                while (worker.awaitTermination(1, TimeUnit.MILLISECONDS)) {
+-                    if (counter == 0){
+-                        break;
+-                    }
+-                    counter--;
+-                }
+-                counter = singleWorkerAwaitTimeOutCount;
+-            }
+-        }
+-    }
+ }

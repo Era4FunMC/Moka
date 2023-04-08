@@ -1,0 +1,737 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Tue, 4 Apr 2023 19:01:14 +0800
+Subject: [PATCH] Fully rebrand and skip a NPE exception in EntityLookup
+
+
+diff --git a/src/main/java/co/earthme/hearse/concurrent/WorkerThreadFactory.java b/src/main/java/co/earthme/hearse/concurrent/WorkerThreadFactory.java
+deleted file mode 100644
+index 5ffca8dac85fcbe50a4445ebc375b33d8228d690..0000000000000000000000000000000000000000
+--- a/src/main/java/co/earthme/hearse/concurrent/WorkerThreadFactory.java
++++ /dev/null
+@@ -1,7 +0,0 @@
+-package co.earthme.hearse.concurrent;
+-
+-import co.earthme.hearse.concurrent.thread.WorkerThread;
+-
+-public interface WorkerThreadFactory {
+-    WorkerThread getNewThread(Runnable task);
+-}
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 387d07868301877dd7fca5d8dfd21e1331f4793e..8b20d0c122fee0bd5ae02047a62be5e3f7efe72e 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -1,43 +1,34 @@
+ package io.papermc.paper.chunk.system.entity;
+ 
++import me.earthme.moka.util.NoSuchChunkEntitySlicesFoundException;
+ import com.destroystokyo.paper.util.maplist.EntityList;
+ import com.mojang.logging.LogUtils;
++import io.papermc.paper.chunk.system.ChunkSystem;
+ import io.papermc.paper.util.CoordinateUtils;
+ import io.papermc.paper.util.TickThread;
+ import io.papermc.paper.util.WorldUtil;
+ import io.papermc.paper.world.ChunkEntitySlices;
+ import it.unimi.dsi.fastutil.ints.Int2ReferenceArrayMap;
+ import it.unimi.dsi.fastutil.ints.Int2ReferenceMap;
+-import it.unimi.dsi.fastutil.ints.Int2ReferenceOpenHashMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectArrayMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.objects.Object2ReferenceArrayMap;
+ import it.unimi.dsi.fastutil.objects.Object2ReferenceMap;
+-import it.unimi.dsi.fastutil.objects.Object2ReferenceOpenHashMap;
+ import net.minecraft.core.BlockPos;
+-import io.papermc.paper.chunk.system.ChunkSystem;
+ import net.minecraft.server.level.ChunkHolder;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.util.AbortableIterationConsumer;
+ import net.minecraft.util.Mth;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.EntityType;
+-import net.minecraft.world.level.entity.EntityInLevelCallback;
+-import net.minecraft.world.level.entity.EntityTypeTest;
+-import net.minecraft.world.level.entity.LevelCallback;
+-import net.minecraft.world.level.entity.LevelEntityGetter;
+-import net.minecraft.world.level.entity.Visibility;
++import net.minecraft.world.level.entity.*;
+ import net.minecraft.world.phys.AABB;
+ import org.jetbrains.annotations.NotNull;
+ import org.jetbrains.annotations.Nullable;
+ import org.slf4j.Logger;
+-import java.util.ArrayList;
+-import java.util.Iterator;
+-import java.util.List;
+-import java.util.NoSuchElementException;
+-import java.util.UUID;
++
++import java.util.*;
+ import java.util.concurrent.locks.Lock;
+ import java.util.concurrent.locks.ReentrantLock;
+ import java.util.concurrent.locks.StampedLock;
+@@ -437,6 +428,10 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+         final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+ 
++        if (old == null){
++            throw new NoSuchChunkEntitySlicesFoundException(); //Moka
++        }
++
+         if (!old.removeEntity(entity, entity.sectionY)) {
+             LOGGER.warn("Could not remove entity " + entity + " from its old chunk section (" + entity.sectionX + "," + entity.sectionY + "," + entity.sectionZ + ") since it was not contained in the section");
+         }
+diff --git a/src/main/java/io/papermc/paper/plugin/provider/source/SparkProviderSource.java b/src/main/java/io/papermc/paper/plugin/provider/source/SparkProviderSource.java
+index 0374296a4d5af0fad119b05b299f4c82bde18a83..ae6e7d5bd9cd08f5a9dece09856f23d4fb3c958d 100644
+--- a/src/main/java/io/papermc/paper/plugin/provider/source/SparkProviderSource.java
++++ b/src/main/java/io/papermc/paper/plugin/provider/source/SparkProviderSource.java
+@@ -1,6 +1,6 @@
+ package io.papermc.paper.plugin.provider.source;
+ 
+-import co.earthme.hearse.HearseConfig;
++import me.earthme.moka.MokaConfig;
+ import com.mojang.logging.LogUtils;
+ import io.papermc.paper.plugin.entrypoint.Entrypoint;
+ import io.papermc.paper.plugin.entrypoint.EntrypointHandler;
+@@ -32,7 +32,7 @@ public class SparkProviderSource extends FileProviderSource {
+     @Override
+     public void registerProviders(EntrypointHandler entrypointHandler, Path context) throws Exception {
+         if (!Boolean.getBoolean("Purpur.IReallyDontWantSpark")) {
+-            if (HearseConfig.getBoolean("purpurmisc.auto-download-spark", true)) {
++            if (MokaConfig.getBoolean("purpurmisc.auto-download-spark", true)) {
+                 try {
+                     File file = context.toFile();
+                     file.getParentFile().mkdirs();
+diff --git a/src/main/java/io/papermc/paper/util/TickThread.java b/src/main/java/io/papermc/paper/util/TickThread.java
+index ea277170975f59561775ad9b63467a7c9abdbbe3..abd537da9364aba4bf104fc42a01188cf84e7e14 100644
+--- a/src/main/java/io/papermc/paper/util/TickThread.java
++++ b/src/main/java/io/papermc/paper/util/TickThread.java
+@@ -1,10 +1,10 @@
+ package io.papermc.paper.util;
+ 
+-import co.earthme.hearse.concurrent.thread.Worker;
++import me.earthme.moka.concurrent.thread.Worker;
+ import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.Entity;
+-import org.bukkit.Bukkit;
++
+ import java.util.concurrent.atomic.AtomicInteger;
+ 
+ public class TickThread extends Thread {
+diff --git a/src/main/java/co/earthme/hearse/Hearse.java b/src/main/java/me/earthme/moka/Moka.java
+similarity index 66%
+rename from src/main/java/co/earthme/hearse/Hearse.java
+rename to src/main/java/me/earthme/moka/Moka.java
+index 692fef51b2f15dd1ddc28773a381b9da3b42725e..aabc6006dcac7e89e87f5d914c215d164bdd9d8d 100644
+--- a/src/main/java/co/earthme/hearse/Hearse.java
++++ b/src/main/java/me/earthme/moka/Moka.java
+@@ -1,23 +1,23 @@
+-package co.earthme.hearse;
++package me.earthme.moka;
+ 
+-import co.earthme.hearse.commands.EntityCountCommand;
+-import co.earthme.hearse.commands.WorkerCommand;
+-import co.earthme.hearse.server.ServerEntityTickHook;
+-import co.earthme.hearse.workers.WorkerThreadPoolManager;
++import me.earthme.moka.commands.EntityCountCommand;
++import me.earthme.moka.commands.WorkerCommand;
++import me.earthme.moka.server.ServerEntityTickHook;
++import me.earthme.moka.workers.WorkerThreadPoolManager;
+ import net.minecraft.server.MinecraftServer;
+ 
+-public class Hearse {
++public class Moka {
+     private static final WorkerThreadPoolManager workerManager = new WorkerThreadPoolManager();
+ 
+     public static void initAll(){
+-        HearseConfig.init();
++        MokaConfig.init();
+         ServerEntityTickHook.init();
+         MinecraftServer.getServer().server.getCommandMap().register("workers","hearse",new WorkerCommand());
+         MinecraftServer.getServer().server.getCommandMap().register("entitycount","hearse",new EntityCountCommand());
+     }
+ 
+     public static void onServerStop(){
+-        HearseConfig.save();
++        MokaConfig.save();
+         workerManager.shutdownAllNow();
+     }
+ 
+diff --git a/src/main/java/co/earthme/hearse/HearseConfig.java b/src/main/java/me/earthme/moka/MokaConfig.java
+similarity index 91%
+rename from src/main/java/co/earthme/hearse/HearseConfig.java
+rename to src/main/java/me/earthme/moka/MokaConfig.java
+index 73b5e76660b5162a7a0b327ddc7dcc3295b86699..765d00d0e1afb30ff230acbfb6b53cc6ecef6643 100644
+--- a/src/main/java/co/earthme/hearse/HearseConfig.java
++++ b/src/main/java/me/earthme/moka/MokaConfig.java
+@@ -1,13 +1,13 @@
+-package co.earthme.hearse;
++package me.earthme.moka;
+ 
+ import org.bukkit.configuration.InvalidConfigurationException;
+ import org.bukkit.configuration.file.YamlConfiguration;
+ import java.io.File;
+ import java.io.IOException;
+ 
+-public class HearseConfig {
++public class MokaConfig {
+     private static final YamlConfiguration configEntry = new YamlConfiguration();
+-    private static final File CONFIG_FILE = new File("hearse.yml");
++    private static final File CONFIG_FILE = new File("moka.yml");
+ 
+     public static void init(){
+         try {
+diff --git a/src/main/java/co/earthme/hearse/commands/EntityCountCommand.java b/src/main/java/me/earthme/moka/commands/EntityCountCommand.java
+similarity index 97%
+rename from src/main/java/co/earthme/hearse/commands/EntityCountCommand.java
+rename to src/main/java/me/earthme/moka/commands/EntityCountCommand.java
+index de759c808040058062078130b527e78215216ebb..efdabacf5fed688076fc65d22cb0d908d9190c19 100644
+--- a/src/main/java/co/earthme/hearse/commands/EntityCountCommand.java
++++ b/src/main/java/me/earthme/moka/commands/EntityCountCommand.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.commands;
++package me.earthme.moka.commands;
+ 
+ import com.google.common.collect.Maps;
+ import net.minecraft.server.MinecraftServer;
+diff --git a/src/main/java/co/earthme/hearse/commands/WorkerCommand.java b/src/main/java/me/earthme/moka/commands/WorkerCommand.java
+similarity index 89%
+rename from src/main/java/co/earthme/hearse/commands/WorkerCommand.java
+rename to src/main/java/me/earthme/moka/commands/WorkerCommand.java
+index 1a4a6869a7278beadd97af006f4b5fae578b83ed..cff840620af15b8c8eeea3ca91b7dc7be9bf857c 100644
+--- a/src/main/java/co/earthme/hearse/commands/WorkerCommand.java
++++ b/src/main/java/me/earthme/moka/commands/WorkerCommand.java
+@@ -1,7 +1,7 @@
+-package co.earthme.hearse.commands;
++package me.earthme.moka.commands;
+ 
+-import co.earthme.hearse.Hearse;
+-import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
++import me.earthme.moka.Moka;
++import me.earthme.moka.concurrent.WorkerThreadPoolExecutor;
+ import org.bukkit.ChatColor;
+ import org.bukkit.command.Command;
+ import org.bukkit.command.CommandSender;
+@@ -27,7 +27,7 @@ public class WorkerCommand extends Command {
+             ret.add("forceStop");
+         }
+         if (args.length == 2){
+-            for (Map.Entry<String, WorkerThreadPoolExecutor> entry : Hearse.getWorkerManager().getManagedWorkers().entrySet()){
++            for (Map.Entry<String, WorkerThreadPoolExecutor> entry : Moka.getWorkerManager().getManagedWorkers().entrySet()){
+                 ret.add(entry.getKey());
+             }
+         }
+@@ -39,7 +39,7 @@ public class WorkerCommand extends Command {
+         if (args.length >= 2){
+             final String action = args[0];
+             final String workerName = args[1];
+-            final WorkerThreadPoolExecutor searchedWorker = Hearse.getWorkerManager().getTargetWorker(workerName);
++            final WorkerThreadPoolExecutor searchedWorker = Moka.getWorkerManager().getTargetWorker(workerName);
+             if (searchedWorker == null){
+                 sender.sendMessage(ChatColor.RED+"Target worker not found!");
+                 return true;
+diff --git a/src/main/java/co/earthme/hearse/concurrent/WorkStealingThreadPool.java b/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
+similarity index 99%
+rename from src/main/java/co/earthme/hearse/concurrent/WorkStealingThreadPool.java
+rename to src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
+index 0ffe40c5bd4e9803fccf03f901fb1e164eec9eeb..65142de415dbd3da3bb24e18efb5ff5e6a03e3fd 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/WorkStealingThreadPool.java
++++ b/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.concurrent;
++package me.earthme.moka.concurrent;
+ 
+ import com.google.common.collect.Lists;
+ import org.jetbrains.annotations.NotNull;
+diff --git a/src/main/java/me/earthme/moka/concurrent/WorkerThreadFactory.java b/src/main/java/me/earthme/moka/concurrent/WorkerThreadFactory.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..5ca083add5323cd03d5f2892fbc5ba7d04b7e1ac
+--- /dev/null
++++ b/src/main/java/me/earthme/moka/concurrent/WorkerThreadFactory.java
+@@ -0,0 +1,7 @@
++package me.earthme.moka.concurrent;
++
++import me.earthme.moka.concurrent.thread.WorkerThread;
++
++public interface WorkerThreadFactory {
++    WorkerThread getNewThread(Runnable task);
++}
+diff --git a/src/main/java/co/earthme/hearse/concurrent/WorkerThreadPoolExecutor.java b/src/main/java/me/earthme/moka/concurrent/WorkerThreadPoolExecutor.java
+similarity index 98%
+rename from src/main/java/co/earthme/hearse/concurrent/WorkerThreadPoolExecutor.java
+rename to src/main/java/me/earthme/moka/concurrent/WorkerThreadPoolExecutor.java
+index 7e010bf23c9fc26284212a4388172f5d7d5a4b99..6a02112d55c317e326d155448e0c50d52b2bc558 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/WorkerThreadPoolExecutor.java
++++ b/src/main/java/me/earthme/moka/concurrent/WorkerThreadPoolExecutor.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.concurrent;
++package me.earthme.moka.concurrent;
+ 
+ import org.jetbrains.annotations.NotNull;
+ 
+diff --git a/src/main/java/co/earthme/hearse/concurrent/thread/Worker.java b/src/main/java/me/earthme/moka/concurrent/thread/Worker.java
+similarity index 73%
+rename from src/main/java/co/earthme/hearse/concurrent/thread/Worker.java
+rename to src/main/java/me/earthme/moka/concurrent/thread/Worker.java
+index e7a944bd515af644bad37a23e012a5a1997e110d..9c51edbaaa5f3b921eb55b853aabb3c4c4f0be10 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/thread/Worker.java
++++ b/src/main/java/me/earthme/moka/concurrent/thread/Worker.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.concurrent.thread;
++package me.earthme.moka.concurrent.thread;
+ 
+ public interface Worker {
+     static boolean isWorker(){
+diff --git a/src/main/java/co/earthme/hearse/concurrent/thread/WorkerForkJoinThread.java b/src/main/java/me/earthme/moka/concurrent/thread/WorkerForkJoinThread.java
+similarity index 85%
+rename from src/main/java/co/earthme/hearse/concurrent/thread/WorkerForkJoinThread.java
+rename to src/main/java/me/earthme/moka/concurrent/thread/WorkerForkJoinThread.java
+index 6a2fb0643b6fc5921b24674940c2c3b92b9e4e88..f4957fec5441eca5fe29efb631205941f47b4bb9 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/thread/WorkerForkJoinThread.java
++++ b/src/main/java/me/earthme/moka/concurrent/thread/WorkerForkJoinThread.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.concurrent.thread;
++package me.earthme.moka.concurrent.thread;
+ 
+ import java.util.concurrent.ForkJoinPool;
+ import java.util.concurrent.ForkJoinWorkerThread;
+diff --git a/src/main/java/co/earthme/hearse/concurrent/thread/WorkerThread.java b/src/main/java/me/earthme/moka/concurrent/thread/WorkerThread.java
+similarity index 85%
+rename from src/main/java/co/earthme/hearse/concurrent/thread/WorkerThread.java
+rename to src/main/java/me/earthme/moka/concurrent/thread/WorkerThread.java
+index f27bfd7ab3ce10e6c318de0c6376a80fa9014d2a..ccfe800273bf2ce2cea6df50ad1a510cacd99f97 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/thread/WorkerThread.java
++++ b/src/main/java/me/earthme/moka/concurrent/thread/WorkerThread.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.concurrent.thread;
++package me.earthme.moka.concurrent.thread;
+ 
+ import io.papermc.paper.util.TickThread;
+ 
+diff --git a/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java b/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
+similarity index 89%
+rename from src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
+rename to src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
+index b88b4f2d3df7303252a3c02824be3514c2618673..bd866fcde4335bfd2ea17e3c9159d2965d3cf128 100644
+--- a/src/main/java/co/earthme/hearse/concurrent/threadfactory/DefaultWorkerFactory.java
++++ b/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
+@@ -1,7 +1,7 @@
+-package co.earthme.hearse.concurrent.threadfactory;
++package me.earthme.moka.concurrent.threadfactory;
+ 
+-import co.earthme.hearse.concurrent.thread.WorkerThread;
+-import co.earthme.hearse.concurrent.WorkerThreadFactory;
++import me.earthme.moka.concurrent.thread.WorkerThread;
++import me.earthme.moka.concurrent.WorkerThreadFactory;
+ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+ import it.unimi.dsi.fastutil.objects.ObjectLists;
+ import net.minecraft.server.MinecraftServer;
+diff --git a/src/main/java/co/earthme/hearse/server/ServerEntityTickHook.java b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+similarity index 77%
+rename from src/main/java/co/earthme/hearse/server/ServerEntityTickHook.java
+rename to src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+index 1896d163104236a618b659977045b18288f403c8..2eef50c12a14e329e6cc1b0f04313f5479d21f83 100644
+--- a/src/main/java/co/earthme/hearse/server/ServerEntityTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+@@ -1,9 +1,10 @@
+-package co.earthme.hearse.server;
++package me.earthme.moka.server;
+ 
+-import co.earthme.hearse.HearseConfig;
+-import co.earthme.hearse.concurrent.WorkStealingThreadPool;
+-import co.earthme.hearse.concurrent.WorkerThreadFactory;
+-import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
++import me.earthme.moka.MokaConfig;
++import me.earthme.moka.concurrent.WorkStealingThreadPool;
++import me.earthme.moka.concurrent.WorkerThreadFactory;
++import me.earthme.moka.concurrent.threadfactory.DefaultWorkerFactory;
++import me.earthme.moka.util.NoSuchChunkEntitySlicesFoundException;
+ import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.world.entity.Entity;
+@@ -31,10 +32,10 @@ public class ServerEntityTickHook {
+     }
+ 
+     public static void init(){
+-        asyncEntityEnabled = HearseConfig.getBoolean("optimizations.enable-parallel-entity",asyncEntityEnabled);
+-        awaitEntityTasks = HearseConfig.getBoolean("optimizations.await-parallel-entity-tasks",awaitEntityTasks);
++        asyncEntityEnabled = MokaConfig.getBoolean("optimizations.enable-parallel-entity",asyncEntityEnabled);
++        awaitEntityTasks = MokaConfig.getBoolean("optimizations.await-parallel-entity-tasks",awaitEntityTasks);
+         if (asyncEntityEnabled){
+-            final int workerCount = HearseConfig.getInt("workers.async-entity-worker-count",Runtime.getRuntime().availableProcessors());
++            final int workerCount = MokaConfig.getInt("workers.async-entity-worker-count",Runtime.getRuntime().availableProcessors());
+             worker = new WorkStealingThreadPool(
+                     workerCount,
+                     defFactory
+@@ -59,7 +60,9 @@ public class ServerEntityTickHook {
+                     }
+                     try {
+                         level.tickNonPassenger(entity);
+-                    } catch (Throwable throwable) {
++                    }catch (NoSuchChunkEntitySlicesFoundException e){
++                        //Do nothing here.
++                    }catch (Throwable throwable) {
+                         if (throwable instanceof ThreadDeath) throw throwable;
+                         level.getCraftServer().getPluginManager().callEvent(new com.destroystokyo.paper.event.server.ServerExceptionEvent(new com.destroystokyo.paper.exception.ServerInternalException(throwable.getMessage(), throwable)));
+                         throwable.printStackTrace();
+diff --git a/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java b/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
+similarity index 83%
+rename from src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
+rename to src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
+index 4c85bf8e4705a781a55a048f0b0541f0d32e2f07..aed00e0ca091affd160a385c43e8c2a08c852c29 100644
+--- a/src/main/java/co/earthme/hearse/server/ServerLevelTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
+@@ -1,11 +1,9 @@
+-package co.earthme.hearse.server;
++package me.earthme.moka.server;
+ 
+-import co.earthme.hearse.Hearse;
+-import co.earthme.hearse.HearseConfig;
+-import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
+-import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
+-import co.earthme.hearse.util.ArrayListBlockingQueue;
+-import io.netty.handler.codec.serialization.ObjectEncoder;
++import me.earthme.moka.Moka;
++import me.earthme.moka.MokaConfig;
++import me.earthme.moka.concurrent.WorkerThreadPoolExecutor;
++import me.earthme.moka.concurrent.threadfactory.DefaultWorkerFactory;
+ import net.minecraft.server.MinecraftServer;
+ import net.minecraft.server.level.ServerLevel;
+ import org.apache.logging.log4j.LogManager;
+@@ -24,7 +22,7 @@ public class ServerLevelTickHook {
+     private static final Logger logger = LogManager.getLogger();
+ 
+     public static void initWorker(){
+-        boolean enabledParaWorld = HearseConfig.getBoolean("optimizations.enableparallelworldtick", true);
++        boolean enabledParaWorld = MokaConfig.getBoolean("optimizations.enableparallelworldtick", true);
+         if (enabledParaWorld){
+             worker = new WorkerThreadPoolExecutor(
+                     MinecraftServer.getServer().levels.size(),
+@@ -36,7 +34,7 @@ public class ServerLevelTickHook {
+             );
+             worker.allowCoreThreadTimeOut(true);
+             worker.prestartAllCoreThreads();
+-            Hearse.getWorkerManager().addWorker("world",worker);
++            Moka.getWorkerManager().addWorker("world",worker);
+             for (Thread worker : workerFactory.getCreatedThreads()){
+                 logger.warn("World worker name:{}.This can help you to slove the lag problems when you using parallel world ticking",worker.getName());
+             }
+diff --git a/src/main/java/co/earthme/hearse/util/ArrayListBlockingQueue.java b/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
+similarity index 99%
+rename from src/main/java/co/earthme/hearse/util/ArrayListBlockingQueue.java
+rename to src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
+index ec63191dca67c51f387ede9796a039210c8c3f99..125a6380743dd76d8bc61009efa5caa62adabf88 100644
+--- a/src/main/java/co/earthme/hearse/util/ArrayListBlockingQueue.java
++++ b/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.util;
++package me.earthme.moka.util;
+ 
+ import org.jetbrains.annotations.NotNull;
+ 
+diff --git a/src/main/java/co/earthme/hearse/util/EntityPositionCache.java b/src/main/java/me/earthme/moka/util/EntityPositionCache.java
+similarity index 97%
+rename from src/main/java/co/earthme/hearse/util/EntityPositionCache.java
+rename to src/main/java/me/earthme/moka/util/EntityPositionCache.java
+index 6f34233901cf1943694224ab393dea5548cb8e5b..45e23226d2e804ed68f5551415e456bb6576b26a 100644
+--- a/src/main/java/co/earthme/hearse/util/EntityPositionCache.java
++++ b/src/main/java/me/earthme/moka/util/EntityPositionCache.java
+@@ -1,4 +1,4 @@
+-package co.earthme.hearse.util;
++package me.earthme.moka.util;
+ 
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.LivingEntity;
+diff --git a/src/main/java/me/earthme/moka/util/NoSuchChunkEntitySlicesFoundException.java b/src/main/java/me/earthme/moka/util/NoSuchChunkEntitySlicesFoundException.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c43510ca1173b863976c4501f5565d4dbbb0961
+--- /dev/null
++++ b/src/main/java/me/earthme/moka/util/NoSuchChunkEntitySlicesFoundException.java
+@@ -0,0 +1,4 @@
++package me.earthme.moka.util;
++
++public class NoSuchChunkEntitySlicesFoundException extends RuntimeException{
++}
+diff --git a/src/main/java/co/earthme/hearse/workers/WorkerThreadPoolManager.java b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+similarity index 94%
+rename from src/main/java/co/earthme/hearse/workers/WorkerThreadPoolManager.java
+rename to src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+index 8cb0d00fb3cd4282873c8b8db88c87e59f8ef9de..ceaf949d6b920495a68502884fe5b797ce5c57b9 100644
+--- a/src/main/java/co/earthme/hearse/workers/WorkerThreadPoolManager.java
++++ b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+@@ -1,10 +1,9 @@
+-package co.earthme.hearse.workers;
++package me.earthme.moka.workers;
+ 
+-import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
++import me.earthme.moka.concurrent.WorkerThreadPoolExecutor;
+ import com.google.common.collect.Maps;
+ import java.util.List;
+ import java.util.Map;
+-import java.util.concurrent.ForkJoinPool;
+ import java.util.concurrent.TimeUnit;
+ 
+ public class WorkerThreadPoolManager {
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 7276ad4028139f994fad7de2dab2f9bb6245df79..3385cf179e29902b9ac4c5be664a7f33644ab5c0 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -1,8 +1,8 @@
+ package net.minecraft.server;
+ 
+-import co.earthme.hearse.Hearse;
+-import co.earthme.hearse.server.ServerEntityTickHook;
+-import co.earthme.hearse.server.ServerLevelTickHook;
++import me.earthme.moka.Moka;
++import me.earthme.moka.server.ServerEntityTickHook;
++import me.earthme.moka.server.ServerLevelTickHook;
+ import com.google.common.base.Splitter;
+ import com.google.common.collect.ImmutableList;
+ import com.google.common.collect.Lists;
+@@ -914,7 +914,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         }
+         if (!hasLoggedStop && isDebugging()) io.papermc.paper.util.TraceUtil.dumpTraceForThread("Server stopped"); // Paper
+         // Paper start - kill main thread, and kill it hard
+-        Hearse.onServerStop();//Hearse
++        Moka.onServerStop();//Hearse
+         shutdownThread = Thread.currentThread();
+         org.spigotmc.WatchdogThread.doStop(); // Paper
+         if (!isSameThread()) {
+diff --git a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
+index d56b5f189076be612aedc9a4132e373c3d0bf5d8..c3db4ca3645baa8d07bb77c091286c1a1e3d2675 100644
+--- a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
++++ b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
+@@ -1,21 +1,16 @@
+ package net.minecraft.server.dedicated;
+ 
+-import co.earthme.hearse.Hearse;
+-import com.google.common.collect.Lists;
++import me.earthme.moka.Moka;
+ import com.mojang.authlib.GameProfile;
+ import com.mojang.datafixers.DataFixer;
+ import com.mojang.logging.LogUtils;
+-import java.io.BufferedReader;
++
+ import java.io.BufferedWriter;
+ import java.io.IOException;
+-import java.io.InputStreamReader;
+ import java.net.InetAddress;
+ import java.net.Proxy;
+-import java.nio.charset.StandardCharsets;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+-import java.util.Collections;
+-import java.util.List;
+ import java.util.Locale;
+ import java.util.Optional;
+ import java.util.function.BooleanSupplier;
+@@ -59,7 +54,6 @@ import org.apache.logging.log4j.Level;
+ import org.apache.logging.log4j.LogManager;
+ import org.apache.logging.log4j.io.IoBuilder;
+ import org.bukkit.command.CommandSender;
+-import co.aikar.timings.MinecraftTimings; // Paper
+ import org.bukkit.event.server.ServerCommandEvent;
+ import org.bukkit.craftbukkit.util.Waitable;
+ import org.bukkit.event.server.RemoteServerCommandEvent;
+@@ -235,7 +229,7 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+         gg.pufferfish.pufferfish.PufferfishConfig.load(); // Pufferfish
+         gg.pufferfish.pufferfish.PufferfishCommand.init(); // Pufferfish
+ 
+-        Hearse.initAll(); //Hearse
++        Moka.initAll(); //Hearse
+ 
+         this.setPvpAllowed(dedicatedserverproperties.pvp);
+         this.setFlightAllowed(dedicatedserverproperties.allowFlight);
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index 3f1969af92e2a9d0ecc109999d2f23c185ff4516..ab02175cbb32e2626aea9fac60b94731b5e442f4 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -1,9 +1,9 @@
+ package net.minecraft.server.level;
+ 
+-import co.earthme.hearse.Hearse;
+-import co.earthme.hearse.HearseConfig;
+-import co.earthme.hearse.concurrent.WorkerThreadPoolExecutor;
+-import co.earthme.hearse.concurrent.threadfactory.DefaultWorkerFactory;
++import me.earthme.moka.Moka;
++import me.earthme.moka.MokaConfig;
++import me.earthme.moka.concurrent.WorkerThreadPoolExecutor;
++import me.earthme.moka.concurrent.threadfactory.DefaultWorkerFactory;
+ import com.google.common.collect.*;
+ import com.google.common.collect.ImmutableList.Builder;
+ import com.google.gson.JsonElement;
+@@ -13,9 +13,6 @@ import com.mojang.logging.LogUtils;
+ import com.mojang.serialization.DataResult;
+ import com.mojang.serialization.JsonOps;
+ import io.papermc.paper.util.MCUtil;
+-import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+-import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
+-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.longs.*;
+ import it.unimi.dsi.fastutil.objects.*;
+ import net.minecraft.CrashReport;
+@@ -1207,9 +1204,9 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+ 
+     public static void tryInitIfNotInited(){
+         if (!isInited.get()){
+-            enabled.set(HearseConfig.getBoolean("optimizations.enable-multithreaded-tracker",true));
++            enabled.set(MokaConfig.getBoolean("optimizations.enable-multithreaded-tracker",true));
+             if (enabled.get()){
+-                final int threadCount = HearseConfig.getInt("workers.multithreaded-tracker-thread-count",Runtime.getRuntime().availableProcessors());
++                final int threadCount = MokaConfig.getInt("workers.multithreaded-tracker-thread-count",Runtime.getRuntime().availableProcessors());
+                 concurrentTrackWorker = new WorkerThreadPoolExecutor(
+                         threadCount,
+                         threadCount,
+@@ -1217,7 +1214,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                         TimeUnit.SECONDS,
+                         new LinkedBlockingQueue<>(),
+                         new DefaultWorkerFactory("tracker-concurrent"));
+-                Hearse.getWorkerManager().addWorker("tracker",concurrentTrackWorker);
++                Moka.getWorkerManager().addWorker("tracker",concurrentTrackWorker);
+             }
+             isInited.set(true);
+         }
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index d6104a27c73d8c6e15b2a667ba57d9fb49771b21..665ce1cc82f000d556cba95e802f4724a0d0851e 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -1,7 +1,6 @@
+ package net.minecraft.server.level;
+ 
+ import ca.spottedleaf.concurrentutil.executor.standard.PrioritisedExecutor;
+-import co.earthme.hearse.concurrent.thread.Worker;
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.collect.Lists;
+ import com.mojang.datafixers.DataFixer;
+@@ -9,8 +8,6 @@ import com.mojang.datafixers.util.Either;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+-import it.unimi.dsi.fastutil.objects.ObjectArraySet;
+-import it.unimi.dsi.fastutil.objects.ObjectSet;
+ import net.minecraft.Util;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 57e01c736ed1868fa8f96b103375397907a32f31..a8d07dd37d3b393044cff98e52196c3927d7abf1 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -1,17 +1,14 @@
+ package net.minecraft.server.level;
+ 
+ import co.aikar.timings.TimingHistory;
+-import co.earthme.hearse.concurrent.thread.WorkerThread;
+-import co.earthme.hearse.server.ServerEntityTickHook;
++import me.earthme.moka.server.ServerEntityTickHook;
+ import com.google.common.annotations.VisibleForTesting;
+-import co.aikar.timings.TimingHistory; // Paper
+-import co.earthme.hearse.concurrent.thread.Worker;
++import me.earthme.moka.concurrent.thread.Worker;
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.Sets;
+ import com.mojang.datafixers.DataFixer;
+ import com.mojang.datafixers.util.Pair;
+ import com.mojang.logging.LogUtils;
+-import io.papermc.paper.util.MCUtil;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
+ import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+diff --git a/src/main/java/net/minecraft/world/entity/LivingEntity.java b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+index 7dcccab77ccc6b2a5fbdfc4505cc7a019c6c25e5..cc2aa6d83f2788ba5d788c6a9ebcd973c004fdc3 100644
+--- a/src/main/java/net/minecraft/world/entity/LivingEntity.java
++++ b/src/main/java/net/minecraft/world/entity/LivingEntity.java
+@@ -1,6 +1,6 @@
+ package net.minecraft.world.entity;
+ 
+-import co.earthme.hearse.util.EntityPositionCache;
++import me.earthme.moka.util.EntityPositionCache;
+ import com.destroystokyo.paper.event.player.PlayerArmorChangeEvent; // Paper
+ import com.google.common.base.Objects;
+ import com.google.common.collect.ImmutableList;
+@@ -126,7 +126,6 @@ import net.minecraft.world.scores.PlayerTeam;
+ import org.slf4j.Logger;
+ 
+ // CraftBukkit start
+-import java.util.ArrayList;
+ import java.util.HashSet;
+ import java.util.Set;
+ import com.google.common.base.Function;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
+index 1ab18b6a7e2a85f06d63ba21354df8431e62e45d..24106a0d5777b5afea20d0fc95281a3ab4778df9 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/NearestLivingEntitySensor.java
+@@ -1,6 +1,6 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
+-import co.earthme.hearse.util.EntityPositionCache;
++import me.earthme.moka.util.EntityPositionCache;
+ import com.google.common.collect.ImmutableSet;
+ import java.util.Comparator;
+ import java.util.List;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java b/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
+index af6dcbd8f531705c356780cc79aa1868a10cfaf9..3a8a5dabf8d1493db23af8d8839803aef0dfcaa9 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
++++ b/src/main/java/net/minecraft/world/entity/ai/sensing/PlayerSensor.java
+@@ -1,11 +1,10 @@
+ package net.minecraft.world.entity.ai.sensing;
+ 
+-import co.earthme.hearse.util.EntityPositionCache;
++import me.earthme.moka.util.EntityPositionCache;
+ import com.google.common.collect.ImmutableSet;
+ 
+ import java.util.*;
+ import java.util.concurrent.atomic.AtomicBoolean;
+-import java.util.stream.Collectors;
+ 
+ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+ import it.unimi.dsi.fastutil.objects.ObjectLists;
+diff --git a/src/main/java/net/minecraft/world/level/Level.java b/src/main/java/net/minecraft/world/level/Level.java
+index 1100dcd7ac70f729c4007f6b34054c81469c9124..b187546d2343824abe3d3978d8f9a76f0cfd23f3 100644
+--- a/src/main/java/net/minecraft/world/level/Level.java
++++ b/src/main/java/net/minecraft/world/level/Level.java
+@@ -1,6 +1,6 @@
+ package net.minecraft.world.level;
+ 
+-import co.earthme.hearse.concurrent.thread.Worker;
++import me.earthme.moka.concurrent.thread.Worker;
+ import com.destroystokyo.paper.event.server.ServerExceptionEvent;
+ import com.destroystokyo.paper.exception.ServerInternalException;
+ import com.google.common.collect.Lists;
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index feb48522bbce0b6d8f1c75564e22c239337b835c..65c2e298274a099704d1380ab2181aaf1d5cb25e 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -1,7 +1,6 @@
+ package org.bukkit.craftbukkit;
+ 
+-import co.earthme.hearse.HearseConfig;
+-import co.earthme.hearse.concurrent.thread.Worker;
++import me.earthme.moka.concurrent.thread.Worker;
+ import com.google.common.base.Charsets;
+ import com.google.common.base.Function;
+ import com.google.common.base.Preconditions;
+@@ -9,7 +8,6 @@ import com.google.common.collect.ImmutableList;
+ import com.google.common.collect.Iterators;
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.MapMaker;
+-import com.google.gson.JsonObject;
+ import com.mojang.authlib.GameProfile;
+ import com.mojang.brigadier.StringReader;
+ import com.mojang.brigadier.exceptions.CommandSyntaxException;
+@@ -110,7 +108,6 @@ import net.minecraft.world.level.levelgen.PatrolSpawner;
+ import net.minecraft.world.level.levelgen.PhantomSpawner;
+ import net.minecraft.world.level.levelgen.WorldDimensions;
+ import net.minecraft.world.level.levelgen.WorldOptions;
+-import net.minecraft.world.level.levelgen.presets.WorldPresets;
+ import net.minecraft.world.level.material.Fluid;
+ import net.minecraft.world.level.saveddata.maps.MapDecoration;
+ import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
+@@ -242,7 +239,6 @@ import org.bukkit.plugin.PluginManager;
+ import org.bukkit.plugin.ServicesManager;
+ import org.bukkit.plugin.SimplePluginManager;
+ import org.bukkit.plugin.SimpleServicesManager;
+-import org.bukkit.plugin.java.JavaPluginLoader;
+ import org.bukkit.plugin.messaging.Messenger;
+ import org.bukkit.plugin.messaging.StandardMessenger;
+ import org.bukkit.potion.Potion;

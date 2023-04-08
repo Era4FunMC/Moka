@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Wed, 5 Apr 2023 14:05:02 +0800
+Subject: [PATCH] Remove something from KioCG's ChunkHot
+
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayer.java b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+index 078d92390e4d564f2803b4bc882e3ec41efd399c..7574f54d986d1ffa3bd1112dda6f6f13a88627b6 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayer.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+@@ -730,6 +730,8 @@ public class ServerPlayer extends Player {
+             if (this.server.getTickCount() % 20 == 1) {
+                 this.nearbyChunkHot = this.refreshNearbyChunkHot();
+ 
++                //Moka start
++                /*
+                 if (this.nearbyChunkHot > 330000L) {
+                     if (this.isAfk) {
+                         this.connection.disconnect(Component.translatable("multiplayer.disconnect.idling"), org.bukkit.event.player.PlayerKickEvent.Cause.IDLING);
+@@ -740,7 +742,8 @@ public class ServerPlayer extends Player {
+                             this.setRemainingFireTicks(fireTicks);
+                         }
+                     }
+-                }
++                }*/
++                //Moka end
+             }
+         } else if (this.server.getTickCount() > 600) {
+             bypassStartup = true;

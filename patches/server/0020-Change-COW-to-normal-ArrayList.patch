@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: wangxyper <wangxyper@163.com>
+Date: Tue, 4 Apr 2023 19:06:48 +0800
+Subject: [PATCH] Change COW to normal ArrayList
+
+
+diff --git a/src/main/java/io/papermc/paper/util/CachedLists.java b/src/main/java/io/papermc/paper/util/CachedLists.java
+index f543462240e744e3424d302eb62be46c70ef9377..82617ff411a73e97cc65807a5858a37bbacb87c7 100644
+--- a/src/main/java/io/papermc/paper/util/CachedLists.java
++++ b/src/main/java/io/papermc/paper/util/CachedLists.java
+@@ -7,13 +7,13 @@ import java.util.List;
+ 
+ public final class CachedLists {
+     public static List<AABB> getTempCollisionList() {
+-        return Lists.newCopyOnWriteArrayList();
++        return Lists.newArrayList();
+     }
+ 
+     public static void returnTempCollisionList(List<AABB> list) {}
+ 
+     public static List<Entity> getTempGetEntitiesList() {
+-        return Lists.newCopyOnWriteArrayList();
++        return Lists.newArrayList();
+     }
+ 
+     public static void returnTempGetEntitiesList(List<Entity> list) {}
