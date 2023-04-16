@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrHua269 <wangxyper@163.com>
+Date: Sun, 16 Apr 2023 19:30:04 +0800
+Subject: [PATCH] Change a lock in polling task
+
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index 665ce1cc82f000d556cba95e802f4724a0d0851e..f35fb0f83e7316720e7620a97f0267c9f6592143 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -8,6 +8,7 @@ import com.mojang.datafixers.util.Either;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
++import me.earthme.moka.server.ServerChunkTickHook;
+ import net.minecraft.Util;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.core.SectionPos;
+@@ -33,6 +34,8 @@ import java.io.IOException;
+ import java.util.*;
+ import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.Executor;
++import java.util.concurrent.locks.Lock;
++import java.util.concurrent.locks.ReentrantLock;
+ import java.util.function.BooleanSupplier;
+ import java.util.function.Consumer;
+ import java.util.function.Supplier;
+@@ -935,7 +938,7 @@ public class ServerChunkCache extends ChunkSource {
+         this.spawnFriendlies = spawnAnimals;
+     }
+ 
+-    private final Object pollTaskLock = new Object();
++    private final Lock pollTaskLock = new ReentrantLock();
+ 
+     public String getChunkDebugData(ChunkPos pos) {
+         return this.chunkMap.getChunkDebugData(pos);
+@@ -999,13 +1002,19 @@ public class ServerChunkCache extends ChunkSource {
+         @Override
+         // CraftBukkit start - process pending Chunk loadCallback() and unloadCallback() after each run task
+         public boolean pollTask() {
+-            synchronized (ServerChunkCache.this.pollTaskLock){
++            if (!ServerChunkCache.this.pollTaskLock.tryLock()){
++                return false; //Skip if we didn't hold this lock
++            }
++
++            try {
+                 ServerChunkCache.this.chunkMap.playerChunkManager.tickMidTick();
+                 if (ServerChunkCache.this.runDistanceManagerUpdates()) {
+                     return true;
+                 }
++                return super.pollTask() | ServerChunkCache.this.level.chunkTaskScheduler.executeMainThreadTask(); // Paper - rewrite chunk system
++            }finally {
++                ServerChunkCache.this.pollTaskLock.unlock();
+             }
+-            return super.pollTask() | ServerChunkCache.this.level.chunkTaskScheduler.executeMainThreadTask(); // Paper - rewrite chunk system
+         }
+     }
+ 
