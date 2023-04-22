@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrHua269 <wangxyper@163.com>
+Date: Sat, 22 Apr 2023 10:00:04 +0800
+Subject: [PATCH] Add back async entity ticking and remove some useless throws
+ and calls
+
+
+diff --git a/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java b/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
+index 210c43bda0121b6a4036c7c87cebc8b2e85bfcda..2bbcdc2b3bc0703c73489da50510d5b8d199c148 100644
+--- a/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
+@@ -198,7 +198,7 @@ public class ServerChunkTickHook {
+ 
+     public static void awaitTasks(){
+         while (activeTasks.get() > 0){
+-            LockSupport.parkNanos("Await world ticking",1000000);
++            LockSupport.parkNanos("Await ticking",1000000);
+         }
+     }
+ }
+diff --git a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+index a5e0e3f5d40318a2f14ddaee055b7f42a3639e22..7584571403972bb54baa0c1840e6200f1fa48bb7 100644
+--- a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+@@ -25,9 +25,9 @@ public class ServerEntityTickHook {
+     private static boolean awaitEntityTasks = true;
+     private static final AtomicInteger taskCounter = new AtomicInteger(0);
+ 
+-    //To prevent the chunk system error.This is necessary
++    //To prevent the chunk system error.This is necessary //We don't need to worry about it now!
+     public static void awaitEntityTasks(){
+-        while (taskCounter.get() > 0){
++        while (taskCounter.get() > 0 && awaitEntityTasks){
+             LockSupport.parkNanos("Await entities",1000000);
+         }
+     }
+diff --git a/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+index 455a1eb92ddd5a301d27395518d4998269c3ffab..0caf0139ab1b9324eb7141ea891decf6049fd551 100644
+--- a/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
++++ b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+@@ -13,7 +13,7 @@ public class WorkerThreadPoolManager {
+         this.managedWorkers.put(bound,worker);
+     }
+ 
+-    public void shutdownAll() throws InterruptedException {
++    public void shutdownAll() {
+         for (WorkerThreadPool worker : this.managedWorkers.values()){
+             worker.terminateNow();
+         }
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 466e7589c3a2fa87f8d2056206d8439ede07853c..cf71b234d58b7996b55fc67ce9e29482d30d6e33 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -791,7 +791,6 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         });
+     }
+     // Paper start - optimise random block ticking
+-    private final BlockPos.MutableBlockPos chunkTickMutablePosition = new BlockPos.MutableBlockPos();
+     public final RandomSource randomTickRandom = RandomSource.create(this.random.nextLong());
+     public net.minecraft.util.RandomSource getThreadUnsafeRandom() { return this.randomTickRandom; } // Pufferfish - moved to super // Purpur - dont break ABI
+     // Paper end
+@@ -799,9 +798,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+     public int currentIceAndSnowTick = 0; protected void resetIceAndSnowTick() { this.currentIceAndSnowTick = this.randomTickRandom.nextInt(16); } // Pufferfish
+ 
+     public void tickChunk(LevelChunk chunk, int randomTickSpeed) {
+-        final BlockPos.MutableBlockPos blockposition = new BlockPos.MutableBlockPos(this.chunkTickMutablePosition.getX(),this.chunkTickMutablePosition.getY(),this.chunkTickMutablePosition.getZ()); // Paper - use mutable to reduce allocation rate, final to force compile fail on change
+-
+-        ServerChunkTickHook.callChunkTick(chunk,randomTickSpeed,this,blockposition);
++        ServerChunkTickHook.callChunkTick(chunk,randomTickSpeed,this,new BlockPos.MutableBlockPos());
+     }
+ 
+     private final Object randomBlockPosLock = new Object();
