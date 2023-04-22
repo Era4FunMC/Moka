@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrHua269 <wangxyper@163.com>
+Date: Sat, 22 Apr 2023 20:01:05 +0800
+Subject: [PATCH] Threading mob spawning and change worker thread names
+
+
+diff --git a/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java b/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
+index 817541d061a592216652a69b3aa6aa7927800344..fef040630ee32782a5dec228361fd138d7405148 100644
+--- a/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
++++ b/src/main/java/me/earthme/moka/concurrent/threadfactory/DefaultWorkerFactory.java
+@@ -24,6 +24,10 @@ public class DefaultWorkerFactory implements WorkerThreadFactory {
+         return this.createdThreads;
+     }
+ 
++    public String getBound() {
++        return this.bound;
++    }
++
+     @Override
+     public WorkerThread getNewThread(Runnable task) {
+         final WorkerThread workerThread = new WorkerThread(()->{
+@@ -32,7 +36,7 @@ public class DefaultWorkerFactory implements WorkerThreadFactory {
+             }finally {
+                 this.createdThreads.remove(Thread.currentThread());
+             }
+-        },"pool-"+poolId.get()+"-worker-"+threadId.getAndIncrement()+"-bound-"+this.bound);
++        },"Pool-"+poolId.get()+"-Worker-"+threadId.getAndIncrement()+"-"+this.bound);
+         this.createdThreads.add(workerThread);
+         workerThread.setDaemon(true);
+         workerThread.setPriority(Thread.NORM_PRIORITY - 2);
+diff --git a/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java b/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
+index 2bbcdc2b3bc0703c73489da50510d5b8d199c148..0205f3be6dff912a6783b205c18a235bce9e1f41 100644
+--- a/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
+@@ -37,7 +37,7 @@ public class ServerChunkTickHook {
+     public static void initWorker(){
+         boolean enabledParaWorld = MokaConfig.getBoolean("optimizations.enable_parallel_random_tick", true);
+         if (enabledParaWorld){
+-            factory = new DefaultWorkerFactory("randomTicks");
++            factory = new DefaultWorkerFactory("ChunkTicks");
+             worker = new WorkStealingThreadPool(
+                     MokaConfig.getInt("optimizations.random_ticks_worker_count",Runtime.getRuntime().availableProcessors()),
+                     factory
+@@ -47,6 +47,10 @@ public class ServerChunkTickHook {
+         enabled = enabledParaWorld;
+     }
+ 
++    public static WorkerThreadPool getWorker(){
++        return worker;
++    }
++
+     public static void callChunkTick(LevelChunk chunk, int randomTickSpeed, ServerLevel level, BlockPos.MutableBlockPos pos){
+         if (!enabled){
+             tickChunk(level,chunk,randomTickSpeed,pos);
+diff --git a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+index 7584571403972bb54baa0c1840e6200f1fa48bb7..a1e18824cbf1187452bf4539a91ca67c5bbfd2b3 100644
+--- a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+@@ -19,7 +19,7 @@ import java.util.concurrent.locks.LockSupport;
+ 
+ public class ServerEntityTickHook {
+     private static final Logger logger = LogManager.getLogger();
+-    private static final WorkerThreadFactory defFactory = new DefaultWorkerFactory("entity");
++    private static final WorkerThreadFactory defFactory = new DefaultWorkerFactory("Entity");
+     private static WorkStealingThreadPool worker;
+     private static boolean asyncEntityEnabled = true;
+     private static boolean awaitEntityTasks = true;
+diff --git a/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java b/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
+index aed00e0ca091affd160a385c43e8c2a08c852c29..efcbf8ec6ebd1ef37c03a054c134c1b3e4714f61 100644
+--- a/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
+@@ -16,7 +16,7 @@ import java.util.concurrent.locks.LockSupport;
+ import java.util.function.BooleanSupplier;
+ 
+ public class ServerLevelTickHook {
+-    private static final DefaultWorkerFactory workerFactory = new DefaultWorkerFactory("world");
++    private static final DefaultWorkerFactory workerFactory = new DefaultWorkerFactory("World");
+     private static WorkerThreadPoolExecutor worker;
+     private static final AtomicInteger activeTaskCount = new AtomicInteger();
+     private static final Logger logger = LogManager.getLogger();
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index 3bdda710602219c104e2051f1218dca12da0bf74..92e41bd416a79fb6cd72a9dfcd30a2730830d799 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -1242,7 +1242,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+             5L,
+             TimeUnit.SECONDS,
+             new LinkedBlockingQueue<>(),
+-            new DefaultWorkerFactory("tracker-async"));
++            new DefaultWorkerFactory("AsyncTracker"));
+     private static WorkerThreadPoolExecutor concurrentTrackWorker = null;
+     private final AtomicInteger totalRunning = new AtomicInteger(0);
+     private static final AtomicBoolean isInited = new AtomicBoolean(false);
+@@ -1259,7 +1259,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                         5L,
+                         TimeUnit.SECONDS,
+                         new LinkedBlockingQueue<>(),
+-                        new DefaultWorkerFactory("tracker-concurrent"));
++                        new DefaultWorkerFactory("ConcurrentTracker"));
+                 Moka.getWorkerManager().addWorker("tracker",concurrentTrackWorker);
+             }
+             isInited.set(true);
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index 35b8c4837da1ae1615d0f72c74043db1f5bdce48..6197169ef3e7d2f265f2587f632f551db87ebbaf 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -8,6 +8,7 @@ import com.mojang.datafixers.util.Either;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
++import me.earthme.moka.concurrent.WorkerThreadPool;
+ import me.earthme.moka.server.ServerChunkTickHook;
+ import net.minecraft.Util;
+ import net.minecraft.core.BlockPos;
+@@ -34,7 +35,9 @@ import java.io.IOException;
+ import java.util.*;
+ import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.Executor;
++import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.concurrent.locks.Lock;
++import java.util.concurrent.locks.LockSupport;
+ import java.util.concurrent.locks.ReentrantLock;
+ import java.util.function.BooleanSupplier;
+ import java.util.function.Consumer;
+@@ -725,8 +728,10 @@ public class ServerChunkCache extends ChunkSource {
+                 iterator1 = shuffled.iterator();
+             }
+ 
++            final AtomicInteger counter = new AtomicInteger();
+             int chunksTicked = 0; // Paper
+             try {
++
+                 while (iterator1.hasNext()) {
+                     LevelChunk chunk1 = iterator1.next();
+                     ChunkHolder holder = chunk1.playerChunk;
+@@ -738,7 +743,21 @@ public class ServerChunkCache extends ChunkSource {
+                         if ((true || this.level.isNaturalSpawningAllowed(chunkcoordintpair)) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, false)) { // Paper - optimise anyPlayerCloseEnoughForSpawning // Paper - the chunk is known ticking
+                             chunk1.incrementInhabitedTime(j);
+                             if (flag2 && (!gg.pufferfish.pufferfish.PufferfishConfig.enableAsyncMobSpawning || _pufferfish_spawnCountsReady.get()) && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, true)) { // Spigot // Paper - optimise anyPlayerCloseEnoughForSpawning & optimise chunk tick iteration
+-                                NaturalSpawner.spawnForChunk(this.level, chunk1, lastSpawnState, this.spawnFriendlies, this.spawnEnemies, flag1); // Pufferfish
++                                counter.getAndIncrement();
++                                final Runnable task = ()->{
++                                    try {
++                                        NaturalSpawner.spawnForChunk(this.level, chunk1, lastSpawnState, this.spawnFriendlies, this.spawnEnemies, flag1); // Pufferfish
++                                    }finally {
++                                        counter.getAndDecrement();
++                                    }
++                                };
++
++                                final WorkerThreadPool worker = ServerChunkTickHook.getWorker();
++                                if (worker == null) {
++                                    task.run();
++                                } else {
++                                    worker.postTask(task);
++                                }
+                             }
+ 
+                             if (true || this.level.shouldTickBlocksAt(chunkcoordintpair.toLong())) { // Paper - the chunk is known ticking
+@@ -755,6 +774,9 @@ public class ServerChunkCache extends ChunkSource {
+                 if (iterator1 instanceof io.papermc.paper.util.maplist.IteratorSafeOrderedReferenceSet.Iterator safeIterator) {
+                     safeIterator.finishedIterating();
+                 }
++                while (counter.get() > 0){
++                    LockSupport.parkNanos("Await Tasks",1);
++                }
+                 ServerChunkTickHook.awaitTasks();
+             }
+             // Paper end - optimise chunk tick iteration
