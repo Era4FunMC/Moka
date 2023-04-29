@@ -1,0 +1,335 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrHua269 <wangxyper@163.com>
+Date: Sat, 29 Apr 2023 08:54:54 +0800
+Subject: [PATCH] Adjust and reformat some codes and override toString in
+ WorkStealingThreadPoolExecutor
+
+
+diff --git a/src/main/java/me/earthme/moka/Moka.java b/src/main/java/me/earthme/moka/Moka.java
+index 34daad8bac378562e219fc4861fc2b3026ff56dd..111e2f746cbd9b3ed835aee9dc196e29d08e7b90 100644
+--- a/src/main/java/me/earthme/moka/Moka.java
++++ b/src/main/java/me/earthme/moka/Moka.java
+@@ -12,8 +12,10 @@ public class Moka {
+ 
+     public static void initAll(){
+         MokaConfig.init();
++
+         ServerEntityTickHook.init();
+         ServerChunkTickHook.initWorker();
++
+         MinecraftServer.getServer().server.getCommandMap().register("workers","moka",new WorkerCommand());
+         MinecraftServer.getServer().server.getCommandMap().register("entitycount","moka",new EntityCountCommand());
+     }
+diff --git a/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java b/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPoolExecutor.java
+similarity index 71%
+rename from src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
+rename to src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPoolExecutor.java
+index dff9a13ed7f4ecf59f9bbaa25d18835345cfab1d..abcf98119a2d44f504e953f2eb38c8663cf16c01 100644
+--- a/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPool.java
++++ b/src/main/java/me/earthme/moka/concurrent/WorkStealingThreadPoolExecutor.java
+@@ -9,37 +9,62 @@ import org.jetbrains.annotations.Nullable;
+ import java.util.Collection;
+ import java.util.Deque;
+ import java.util.List;
+-import java.util.concurrent.Callable;
+-import java.util.concurrent.ConcurrentLinkedDeque;
+-import java.util.concurrent.Future;
+-import java.util.concurrent.FutureTask;
++import java.util.concurrent.*;
+ import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.concurrent.locks.LockSupport;
+ 
+-public class WorkStealingThreadPool implements WorkerThreadPool{
++@SuppressWarnings(
++        "Task commiting and thread pool init are thread unsafe!"
++)
++public class WorkStealingThreadPoolExecutor implements WorkerThreadPool{
+     private static final Logger logger = LogManager.getLogger();
+ 
+-    private WorkerThread[] workerThreads = null;
+-    private final ExceptionHandler exceptionHandler;
+-    private volatile boolean creatingThreads = false;
+     private final WorkerThreadFactory factory;
++    private final ExceptionHandler exceptionHandler;
++
++    private volatile boolean modifyingThreadPool = false;
++    private WorkerThread[] workerThreads = null;
+     private int lastPostedPos = 0;
+ 
+-    public WorkStealingThreadPool(int nThreads, ExceptionHandler exceptionHandler, WorkerThreadFactory factory) {
++    private final Object indexMutex = new Object();
++
++    public WorkStealingThreadPoolExecutor(int nThreads, ExceptionHandler exceptionHandler, WorkerThreadFactory factory) {
+         this.exceptionHandler = exceptionHandler;
+         this.factory = factory;
+         this.runWorkers(nThreads);
+     }
+ 
+-    public WorkStealingThreadPool(int nThreads,WorkerThreadFactory factory){
++    public WorkStealingThreadPoolExecutor(int nThreads, WorkerThreadFactory factory){
+         this(nThreads,(exception,thread)->{
+-            logger.warn("Worker {} has a exception:{}",thread.getName(),exception);
++            logger.warn("Worker {} has an exception:{}",thread.getName(),exception);
+             exception.printStackTrace();
+         },factory);
+     }
+ 
++    @Override
++    public String toString(){
++        return "@" + this.getClass().getName() +
++                "[" + "active thread count:" + (!this.modifyingThreadPool ? this.workerThreads.length : "Unavailable") + ","
++                + "queued tasks:" + (!this.modifyingThreadPool ? this.computeQueuedTaskCount() : "Unavailable") + ","
++                + "modifying:" + this.modifyingThreadPool + "]";
++    }
++
++    public int computeQueuedTaskCount(){
++        if (this.modifyingThreadPool){
++            throw new IllegalStateException();
++        }
++
++        int i = 0;
++
++        for (WorkerThread workerThread : this.workerThreads){
++            i+= workerThread.getQueuedTaskCount();
++        }
++
++        return i;
++    }
++
+     private void runWorkers(int threadCount) {
+-        this.creatingThreads = true;
++        this.modifyingThreadPool = true;
+         try {
+             this.workerThreads = new WorkerThread[threadCount];
+             for (int i = 0; i < threadCount; i++) {
+@@ -48,20 +73,26 @@ public class WorkStealingThreadPool implements WorkerThreadPool{
+                 workerThread.start();
+             }
+         }finally {
+-            this.creatingThreads = false;
++            this.modifyingThreadPool = false;
+         }
+     }
+ 
+     @Override
+     public void postTask(@NotNull Runnable task) {
+-        int workerIndex;
+-        if (this.lastPostedPos + 1 >= this.workerThreads.length) {
+-            this.lastPostedPos = 0;
++        if (this.modifyingThreadPool){
++            throw new RejectedExecutionException();
+         }
+-        workerIndex = this.lastPostedPos++;
+ 
+-        final WorkerThread workerThread = this.workerThreads[workerIndex];
+-        workerThread.postRunnable(task);
++        synchronized (this.indexMutex){
++            int workerIndex;
++            if (this.lastPostedPos + 1 >= this.workerThreads.length) {
++                this.lastPostedPos = 0;
++            }
++            workerIndex = this.lastPostedPos++;
++
++            final WorkerThread workerThread = this.workerThreads[workerIndex];
++            workerThread.postRunnable(task);
++        }
+     }
+ 
+     @Override
+@@ -109,7 +140,7 @@ public class WorkStealingThreadPool implements WorkerThreadPool{
+     private class WorkerThread implements Runnable {
+         private final Deque<Runnable> tasks = new ConcurrentLinkedDeque<>();
+         private final AtomicBoolean runningTask = new AtomicBoolean();
+-        private final Thread worker = WorkStealingThreadPool.this.factory.getNewThread(this);
++        private final Thread worker = WorkStealingThreadPoolExecutor.this.factory.getNewThread(this);
+ 
+         private volatile boolean shouldRun = false;
+         private volatile boolean running = false;
+@@ -163,7 +194,7 @@ public class WorkStealingThreadPool implements WorkerThreadPool{
+                         try {
+                             curTask.run();
+                         } catch (Exception e) {
+-                            WorkStealingThreadPool.this.exceptionHandler.handle(e,this.worker);
++                            WorkStealingThreadPoolExecutor.this.exceptionHandler.handle(e,this.worker);
+                         } finally {
+                             this.runningTask.set(false);
+                         }
+@@ -174,7 +205,7 @@ public class WorkStealingThreadPool implements WorkerThreadPool{
+                         try {
+                             stole.run();
+                         } catch (Exception e) {
+-                            WorkStealingThreadPool.this.exceptionHandler.handle(e,this.worker);
++                            WorkStealingThreadPoolExecutor.this.exceptionHandler.handle(e,this.worker);
+                         }
+                         continue;
+                     }
+@@ -193,11 +224,11 @@ public class WorkStealingThreadPool implements WorkerThreadPool{
+ 
+         @Nullable
+         protected Runnable steal() {
+-            if (WorkStealingThreadPool.this.creatingThreads){
++            if (WorkStealingThreadPoolExecutor.this.modifyingThreadPool){
+                 return null;
+             }
+ 
+-            for (WorkerThread workerThread : WorkStealingThreadPool.this.workerThreads) {
++            for (WorkerThread workerThread : WorkStealingThreadPoolExecutor.this.workerThreads) {
+                 if (workerThread.equals(this)) {
+                     continue;
+                 }
+@@ -213,7 +244,6 @@ public class WorkStealingThreadPool implements WorkerThreadPool{
+             return this.block;
+         }
+ 
+-
+         protected int getQueuedTaskCount() {
+             return this.tasks.size();
+         }
+diff --git a/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java b/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
+index 0205f3be6dff912a6783b205c18a235bce9e1f41..f91a1917390863ca7d102b66d3de0e16b064fe9d 100644
+--- a/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerChunkTickHook.java
+@@ -2,13 +2,12 @@ package me.earthme.moka.server;
+ 
+ import me.earthme.moka.Moka;
+ import me.earthme.moka.MokaConfig;
+-import me.earthme.moka.concurrent.WorkStealingThreadPool;
++import me.earthme.moka.concurrent.WorkStealingThreadPoolExecutor;
+ import me.earthme.moka.concurrent.WorkerThreadFactory;
+ import me.earthme.moka.concurrent.WorkerThreadPool;
+ import me.earthme.moka.concurrent.threadfactory.DefaultWorkerFactory;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.server.level.ServerLevel;
+-import net.minecraft.util.RandomSource;
+ import net.minecraft.world.DifficultyInstance;
+ import net.minecraft.world.entity.EntityType;
+ import net.minecraft.world.entity.LightningBolt;
+@@ -38,7 +37,7 @@ public class ServerChunkTickHook {
+         boolean enabledParaWorld = MokaConfig.getBoolean("optimizations.enable_parallel_random_tick", true);
+         if (enabledParaWorld){
+             factory = new DefaultWorkerFactory("ChunkTicks");
+-            worker = new WorkStealingThreadPool(
++            worker = new WorkStealingThreadPoolExecutor(
+                     MokaConfig.getInt("optimizations.random_ticks_worker_count",Runtime.getRuntime().availableProcessors()),
+                     factory
+             );
+diff --git a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+index a1e18824cbf1187452bf4539a91ca67c5bbfd2b3..7cf804c6c4ebdf5172dee2f27654ccbf3e1577b0 100644
+--- a/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerEntityTickHook.java
+@@ -2,7 +2,7 @@ package me.earthme.moka.server;
+ 
+ import me.earthme.moka.Moka;
+ import me.earthme.moka.MokaConfig;
+-import me.earthme.moka.concurrent.WorkStealingThreadPool;
++import me.earthme.moka.concurrent.WorkStealingThreadPoolExecutor;
+ import me.earthme.moka.concurrent.WorkerThreadFactory;
+ import me.earthme.moka.concurrent.threadfactory.DefaultWorkerFactory;
+ import me.earthme.moka.util.NoSuchChunkEntitySlicesFoundException;
+@@ -20,7 +20,7 @@ import java.util.concurrent.locks.LockSupport;
+ public class ServerEntityTickHook {
+     private static final Logger logger = LogManager.getLogger();
+     private static final WorkerThreadFactory defFactory = new DefaultWorkerFactory("Entity");
+-    private static WorkStealingThreadPool worker;
++    private static WorkStealingThreadPoolExecutor worker;
+     private static boolean asyncEntityEnabled = true;
+     private static boolean awaitEntityTasks = true;
+     private static final AtomicInteger taskCounter = new AtomicInteger(0);
+@@ -37,7 +37,7 @@ public class ServerEntityTickHook {
+         awaitEntityTasks = MokaConfig.getBoolean("optimizations.await-parallel-entity-tasks",awaitEntityTasks);
+         if (asyncEntityEnabled){
+             final int workerCount = MokaConfig.getInt("workers.async-entity-worker-count",Runtime.getRuntime().availableProcessors());
+-            worker = new WorkStealingThreadPool(
++            worker = new WorkStealingThreadPoolExecutor(
+                     workerCount,
+                     defFactory
+             );
+diff --git a/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java b/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
+index efcbf8ec6ebd1ef37c03a054c134c1b3e4714f61..01906105760c7b306876e19fdcbe7ecd7b066ec5 100644
+--- a/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
++++ b/src/main/java/me/earthme/moka/server/ServerLevelTickHook.java
+@@ -24,6 +24,7 @@ public class ServerLevelTickHook {
+     public static void initWorker(){
+         boolean enabledParaWorld = MokaConfig.getBoolean("optimizations.enableparallelworldtick", true);
+         if (enabledParaWorld){
++            //TODO Dynamic thread count adjusting
+             worker = new WorkerThreadPoolExecutor(
+                     MinecraftServer.getServer().levels.size(),
+                     MinecraftServer.getServer().levels.size(),
+@@ -32,9 +33,12 @@ public class ServerLevelTickHook {
+                     new ArrayBlockingQueue<>(MinecraftServer.getServer().levels.size()),
+                     workerFactory
+             );
++
+             worker.allowCoreThreadTimeOut(true);
+             worker.prestartAllCoreThreads();
++
+             Moka.getWorkerManager().addWorker("world",worker);
++
+             for (Thread worker : workerFactory.getCreatedThreads()){
+                 logger.warn("World worker name:{}.This can help you to slove the lag problems when you using parallel world ticking",worker.getName());
+             }
+diff --git a/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java b/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
+index 07c556c830cd419ceeb90ac4f3c6b370e9158275..e3f25427cf78c5d61e478449586a0a4c24f45842 100644
+--- a/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
++++ b/src/main/java/me/earthme/moka/util/ArrayListBlockingQueue.java
+@@ -7,6 +7,7 @@ import java.util.concurrent.BlockingQueue;
+ import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.locks.StampedLock;
+ 
++@Deprecated(forRemoval = true)
+ public class ArrayListBlockingQueue<T> implements BlockingQueue<T> {
+     private final List<T> internalList = new ArrayList<>();
+     private final StampedLock editLock = new StampedLock();
+diff --git a/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+index 0caf0139ab1b9324eb7141ea891decf6049fd551..4d467ba1340d28bca2870f182a576a9f49489ac2 100644
+--- a/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
++++ b/src/main/java/me/earthme/moka/workers/WorkerThreadPoolManager.java
+@@ -6,6 +6,7 @@ import me.earthme.moka.concurrent.WorkerThreadPool;
+ import java.util.List;
+ import java.util.Map;
+ 
++@Deprecated
+ public class WorkerThreadPoolManager {
+     private final Map<String, WorkerThreadPool> managedWorkers = Maps.newHashMap();
+ 
+@@ -13,6 +14,7 @@ public class WorkerThreadPoolManager {
+         this.managedWorkers.put(bound,worker);
+     }
+ 
++    @Deprecated
+     public void shutdownAll() {
+         for (WorkerThreadPool worker : this.managedWorkers.values()){
+             worker.terminateNow();
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index cf71b234d58b7996b55fc67ce9e29482d30d6e33..77b03cc8f956b3ed9f088e4b2ce4c18abdefd106 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -714,13 +714,12 @@ public class ServerLevel extends Level implements WorldGenLevel {
+             this.dragonFight.tick();
+         }
+ 
+-        this.tickBlockEntities();
+-
+         org.spigotmc.ActivationRange.activateEntities(this); // Spigot
+         this.entityTickList.forEach((entity) -> {
+             ServerEntityTickHook.callAsyncEntityTick(entity,this);
+         });
+ 
++        this.tickBlockEntities();
+     }
+ 
+     @Override
+diff --git a/src/main/java/net/minecraft/world/level/entity/EntityTickList.java b/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
+index 2a14b665437336aa32ca14fb2137d5bb400e2e42..345a6ede1f77f501b7362396fb84662bb6cf288d 100644
+--- a/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
++++ b/src/main/java/net/minecraft/world/level/entity/EntityTickList.java
+@@ -6,7 +6,7 @@ import java.util.List;
+ import java.util.function.Consumer;
+ 
+ public class EntityTickList {
+-    public final List<Entity> entities = Lists.newCopyOnWriteArrayList();
++    public final List<Entity> entities = Lists.newCopyOnWriteArrayList(); //TODO Find a better replacement because the COW used too many memory
+ 
+     public void add(Entity entity) {
+         io.papermc.paper.util.TickThread.ensureTickThread("Asynchronous entity ticklist addition"); // Paper

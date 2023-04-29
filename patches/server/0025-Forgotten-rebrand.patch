@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrHua269 <wangxyper@163.com>
+Date: Sat, 29 Apr 2023 08:56:19 +0800
+Subject: [PATCH] Forgotten rebrand
+
+
+diff --git a/src/main/java/me/earthme/moka/commands/WorkerCommand.java b/src/main/java/me/earthme/moka/commands/WorkerCommand.java
+index 371fbf73698e7079ce4cab1a940a2992250638bd..669af36bbcc384fc4a040a860555623020836846 100644
+--- a/src/main/java/me/earthme/moka/commands/WorkerCommand.java
++++ b/src/main/java/me/earthme/moka/commands/WorkerCommand.java
+@@ -14,7 +14,7 @@ import java.util.Map;
+ public class WorkerCommand extends Command {
+     public WorkerCommand() {
+         super("workers");
+-        this.setPermission("hearse.commands.workers");
++        this.setPermission("moka.commands.workers");
+         this.setDescription("You can see or edit the server workers by using this command");
+         this.setUsage("/workers <status,setThreadCount,forceStop> <workername>");
+     }

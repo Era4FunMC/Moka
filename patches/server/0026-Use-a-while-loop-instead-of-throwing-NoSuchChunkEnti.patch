@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrHua269 <wangxyper@163.com>
+Date: Sat, 29 Apr 2023 15:06:47 +0800
+Subject: [PATCH] Use a while loop instead of throwing
+ NoSuchChunkEntitySlicesFoundException
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index e517d62df5352651a6f3c140f5ed63e4327bd530..f8db50768cb233dea3c51b9e1253859933358fd7 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -414,8 +414,8 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+         final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+ 
+-        if (old == null){
+-            throw new NoSuchChunkEntitySlicesFoundException(); //Moka
++        while (old == null){
++            old = this.getChunk(entity.sectionX,entity.sectionZ);
+         }
+ 
+         if (!old.removeEntity(entity, entity.sectionY)) {
