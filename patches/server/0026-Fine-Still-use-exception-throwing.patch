@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MrHua269 <wangxyper@163.com>
+Date: Sun, 30 Apr 2023 09:45:46 +0800
+Subject: [PATCH] Fine,Still use exception throwing
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index e517d62df5352651a6f3c140f5ed63e4327bd530..3ba15cbfc3765d8f1254ff785b4360a367588384 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -415,7 +415,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+ 
+         if (old == null){
+-            throw new NoSuchChunkEntitySlicesFoundException(); //Moka
++            throw new NoSuchChunkEntitySlicesFoundException();
+         }
+ 
+         if (!old.removeEntity(entity, entity.sectionY)) {
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 77b03cc8f956b3ed9f088e4b2ce4c18abdefd106..bf4727653fe28124aedf969777ef76c917db4482 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -714,12 +714,12 @@ public class ServerLevel extends Level implements WorldGenLevel {
+             this.dragonFight.tick();
+         }
+ 
++        this.tickBlockEntities();
++
+         org.spigotmc.ActivationRange.activateEntities(this); // Spigot
+         this.entityTickList.forEach((entity) -> {
+             ServerEntityTickHook.callAsyncEntityTick(entity,this);
+         });
+-
+-        this.tickBlockEntities();
+     }
+ 
+     @Override
+diff --git a/src/main/java/net/minecraft/world/level/Level.java b/src/main/java/net/minecraft/world/level/Level.java
+index d59c1d0f5b8c8b6f2e9effcb3fd516f4bbd6108f..76cd1e1e5cf1f99784b99c5ae85f3a3047281d09 100644
+--- a/src/main/java/net/minecraft/world/level/Level.java
++++ b/src/main/java/net/minecraft/world/level/Level.java
+@@ -12,6 +12,8 @@ import java.util.function.Consumer;
+ import java.util.function.Predicate;
+ import java.util.function.Supplier;
+ import javax.annotation.Nullable;
++
++import me.earthme.moka.util.NoSuchChunkEntitySlicesFoundException;
+ import net.minecraft.CrashReport;
+ import net.minecraft.CrashReportCategory;
+ import net.minecraft.core.BlockPos;
+@@ -1041,7 +1043,11 @@ public abstract class Level implements LevelAccessor, AutoCloseable {
+                 toRemove.add(tickingblockentity); // Paper - use removeAll
+                 // Spigot end
+             } else if (this.shouldTickBlocksAt(tickingblockentity.getPos())) {
+-                tickingblockentity.tick();
++                try {
++                    tickingblockentity.tick();
++                }catch (NoSuchChunkEntitySlicesFoundException ingored){
++                    //Do nothing here
++                }
+                 // Paper start - execute chunk tasks during tick
+                 if ((this.tileTickPosition & 7) == 0) {
+                     MinecraftServer.getServer().executeMidTickTasks();
